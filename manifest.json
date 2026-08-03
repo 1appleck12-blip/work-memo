@@ -1,0 +1,12 @@
+{
+  "name": "仕事メモ",
+  "short_name": "仕事メモ",
+  "start_url": "./work-memo.html",
+  "display": "standalone",
+  "background_color": "#765034",
+  "theme_color": "#F2F3F5",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
