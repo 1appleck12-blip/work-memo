@@ -290,6 +290,7 @@ main{padding:14px;max-width:720px;margin:0 auto;}
       <button class="tool-btn" id="btnImport">読込み</button>
       <button class="tool-btn" id="btnCSV">CSV</button>
       <button class="tool-btn" id="btnHL">🖍 マーカー</button>
+      <button class="tool-btn" id="btnDuplexSetup">⚙ 両面設定</button>
       <button class="tool-btn" id="btnPrint">印刷</button>
     </div>
   </div>
@@ -362,7 +363,8 @@ let state = {
   procs: [],
   products: [],
   todos: [],
-  english: []
+  english: [],
+  duplexCalib: { shiftTopMm: -1.0 }
 };
 let tab = 'memo';
 let activeCat = 'all';
@@ -379,6 +381,7 @@ function load(){
         if(!Array.isArray(state.procs)) state.procs = [];
         if(!Array.isArray(state.todos)) state.todos = [];
         if(!Array.isArray(state.english)) state.english = [];
+        if(!state.duplexCalib) state.duplexCalib = { shiftTopMm: -1.0 };
         if(!state._migEnglishTab){
           const engCat = state.categories.find(c => c.name === '英語');
           if(engCat){
@@ -1075,6 +1078,10 @@ $('#btnPrint').onclick = () => {
     </label>`).join('');
   const ov = modal(`<h2>印刷するタブを選ぶ</h2>
     <div>${opts}</div>
+    <label style="display:flex;align-items:center;gap:8px;padding:11px 0;border-top:1px solid var(--line);margin-top:4px">
+      <input type="checkbox" id="duplexChk" style="width:18px;height:18px">
+      両面で印刷する（同じ項目の続きページだけ裏表にします）
+    </label>
     <div class="modal-acts">
       <button class="btn-ghost" data-x>やめる</button>
       <button class="btn-solid" data-ok>印刷する</button>
@@ -1082,10 +1089,43 @@ $('#btnPrint').onclick = () => {
   ov.querySelector('[data-x]').onclick = () => ov.remove();
   ov.querySelector('[data-ok]').onclick = () => {
     const chosen = Array.from(ov.querySelectorAll('.pchk:checked')).map(c => c.value);
+    const duplex = ov.querySelector('#duplexChk').checked;
     ov.remove();
     if(!chosen.length){ toast('タブを1つ以上選んでください'); return; }
-    buildPrintView(chosen);
-    setTimeout(() => window.print(), 60);
+    const cardObjs = buildCardList(chosen);
+    if(!cardObjs.length){ toast('印刷する内容がありません'); return; }
+    if(!duplex){
+      $('#printArea').innerHTML = renderSheets(cardObjs.map(c => c.html));
+      setTimeout(() => window.print(), 60);
+      return;
+    }
+    openDuplexPrintPanel(cardObjs);
+  };
+};
+
+$('#btnDuplexSetup').onclick = () => {
+  const cur = state.duplexCalib || {shiftTopMm:-1.0};
+  const mag = Math.abs(cur.shiftTopMm).toFixed(1);
+  const dir = cur.shiftTopMm < 0 ? 'left' : 'right';
+  const ov = modal(`<h2>両面印刷のズレ補正</h2>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 10px">キャリブレーション用紙で測った、上端でのズレ量を入れてください。下端は0mmとして、間は比例で補正します。</p>
+    <input id="calMag" type="number" step="0.1" min="0" value="${mag}" placeholder="ズレの大きさ (mm)">
+    <div style="display:flex;gap:16px;margin:6px 0 10px">
+      <label><input type="radio" name="calDir" value="left" ${dir==='left'?'checked':''}> 裏が右にずれた（左に補正）</label>
+    </div>
+    <div style="display:flex;gap:16px;margin:0 0 10px">
+      <label><input type="radio" name="calDir" value="right" ${dir==='right'?'checked':''}> 裏が左にずれた（右に補正）</label>
+    </div>
+    <div class="modal-acts">
+      <button class="btn-ghost" data-x>やめる</button>
+      <button class="btn-solid" data-ok>保存</button>
+    </div>`);
+  ov.querySelector('[data-x]').onclick = () => ov.remove();
+  ov.querySelector('[data-ok]').onclick = () => {
+    const m = parseFloat(ov.querySelector('#calMag').value) || 0;
+    const d = ov.querySelector('input[name="calDir"]:checked').value;
+    state.duplexCalib = { shiftTopMm: d === 'left' ? -m : m };
+    save(); ov.remove(); toast('保存しました');
   };
 };
 
@@ -1102,14 +1142,17 @@ function getMeasureHost(){
   return _measureHost;
 }
 const MM_TO_PX = 96/25.4;
+const CARD_H_MM = 148;
+const CARDS_PER_SHEET = 2;
 
-function paginateList(heading, meta, liArray, listTag, listClass){
+/* paginateList now returns tagged card objects so front/back pairing can find continuations */
+function paginateList(heading, meta, liArray, listTag, listClass, groupId){
   const build = (label, items) =>
     `<div class="pcard"><div class="pcard-head">${esc(label)}</div><div class="pcard-meta">${esc(meta)}</div>`+
     `<div class="pcard-body"><${listTag} class="${listClass}">${items.join('')}</${listTag}></div></div>`;
-  if(!liArray.length) return [build(heading, [])];
+  if(!liArray.length) return [{html: build(heading, []), groupId, pageIndex:0, pageCount:1}];
 
-  const maxH = 148 * MM_TO_PX;
+  const maxH = CARD_H_MM * MM_TO_PX;
   const host = getMeasureHost();
   const groups = [];
   let current = [];
@@ -1125,15 +1168,19 @@ function paginateList(heading, meta, liArray, listTag, listClass){
     }
   });
   if(current.length) groups.push(current);
-  return groups.map((items, idx) =>
-    build(groups.length > 1 ? `${heading}（${idx+1}/${groups.length}）` : heading, items));
+  return groups.map((items, idx) => ({
+    html: build(groups.length > 1 ? `${heading}（${idx+1}/${groups.length}）` : heading, items),
+    groupId, pageIndex: idx, pageCount: groups.length
+  }));
 }
 
-function buildPrintView(chosen){
-  const cardHTMLs = [];
-  const oneCard = (heading, meta, bodyHTML) => cardHTMLs.push(
-    `<div class="pcard"><div class="pcard-head">${esc(heading||'')}</div><div class="pcard-meta">${esc(meta||'')}</div><div class="pcard-body">${bodyHTML}</div></div>`
-  );
+let _gid = 0;
+function buildCardList(chosen){
+  const cards = [];
+  const oneCard = (heading, meta, bodyHTML) => cards.push({
+    html: `<div class="pcard"><div class="pcard-head">${esc(heading||'')}</div><div class="pcard-meta">${esc(meta||'')}</div><div class="pcard-body">${bodyHTML}</div></div>`,
+    groupId: 'g'+(_gid++), pageIndex:0, pageCount:1
+  });
 
   if(chosen.includes('memo')){
     state.memos.slice().sort((a,b) => b.created-a.created).forEach(m => {
@@ -1143,13 +1190,13 @@ function buildPrintView(chosen){
   if(chosen.includes('proc')){
     state.procs.slice().sort((a,b) => b.updated-a.updated).forEach(p => {
       const liList = p.steps.map(s => '<li>'+hlHTML(s.text, s.highlights)+'</li>');
-      paginateList(p.title, fmt(p.updated), liList, 'ol', 'psteps').forEach(html => cardHTMLs.push(html));
+      paginateList(p.title, fmt(p.updated), liList, 'ol', 'psteps', 'g'+(_gid++)).forEach(c => cards.push(c));
     });
   }
   if(chosen.includes('prod')){
     state.products.slice().sort((a,b) => a.name.localeCompare(b.name,'ja')).forEach(p => {
       const liList = p.facts.map(f => '<li>'+hlHTML(f.text, f.highlights)+'</li>');
-      paginateList(p.name, p.maker || '', liList, 'ul', 'pfacts').forEach(html => cardHTMLs.push(html));
+      paginateList(p.name, p.maker || '', liList, 'ul', 'pfacts', 'g'+(_gid++)).forEach(c => cards.push(c));
     });
   }
   if(chosen.includes('todo')){
@@ -1164,12 +1211,78 @@ function buildPrintView(chosen){
       oneCard('英語', fmt(e.created), '<div class="pcard-text">'+hlHTML(e.text, e.highlights)+'</div>');
     });
   }
+  return cards;
+}
 
+function renderSheets(htmlList){
   let html = '';
-  for(let i=0; i<cardHTMLs.length; i+=2){
-    html += '<div class="psheet">' + cardHTMLs.slice(i, i+2).join('') + '</div>';
+  for(let i=0; i<htmlList.length; i+=CARDS_PER_SHEET){
+    html += '<div class="psheet">' + htmlList.slice(i, i+CARDS_PER_SHEET).join('') + '</div>';
   }
-  $('#printArea').innerHTML = html || '<p style="padding:20px">印刷する内容がありません</p>';
+  return html || '<p style="padding:20px">印刷する内容がありません</p>';
+}
+
+/* ---- 両面印刷：同じ項目の続きページだけを表裏にペアリング ---- */
+function pairFrontBack(cardObjs){
+  const slots = [];
+  let i = 0;
+  while(i < cardObjs.length){
+    const cur = cardObjs[i];
+    const next = cardObjs[i+1];
+    if(next && next.groupId === cur.groupId && next.pageIndex === cur.pageIndex+1){
+      slots.push({front: cur.html, back: next.html});
+      i += 2;
+    }else{
+      slots.push({front: cur.html, back: null});
+      i += 1;
+    }
+  }
+  return slots;
+}
+function emptyCardHTML(){
+  return '<div class="pcard"></div>';
+}
+function calibShiftForSlot(idx){
+  const topY = 297 - idx*CARD_H_MM;         // top edge of this card, mm from page bottom
+  const centerY = topY - CARD_H_MM/2;        // vertical center of this card
+  const frac = Math.max(0, Math.min(1, centerY/297));
+  const calib = state.duplexCalib || {shiftTopMm:-1.0};
+  return calib.shiftTopMm * frac;
+}
+function buildDuplexHTML(slots){
+  let frontHTML = '', backHTML = '';
+  for(let i=0; i<slots.length; i+=CARDS_PER_SHEET){
+    const group = slots.slice(i, i+CARDS_PER_SHEET);
+    frontHTML += '<div class="psheet">' + group.map(s => s.front || emptyCardHTML()).join('') + '</div>';
+    backHTML += '<div class="psheet">' + group.map((s, idx) => {
+      const html = s.back || emptyCardHTML();
+      const shift = calibShiftForSlot(idx).toFixed(2);
+      return `<div class="pcard-shift" style="transform:translateX(${shift}mm)">${html}</div>`;
+    }).join('') + '</div>';
+  }
+  return {frontHTML, backHTML};
+}
+function openDuplexPrintPanel(cardObjs){
+  const slots = pairFrontBack(cardObjs);
+  const {frontHTML, backHTML} = buildDuplexHTML(slots);
+  const ov = modal(`<h2>両面印刷</h2>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 12px">① を印刷 → 紙を裏返してセットし直す → ② を印刷、の順で進めてください。</p>
+    <div class="modal-acts" style="justify-content:flex-start;flex-wrap:wrap;gap:8px">
+      <button class="btn-solid" data-front>① 表面を印刷</button>
+      <button class="btn-solid proc" data-back>② 裏面を印刷</button>
+    </div>
+    <div class="modal-acts">
+      <button class="btn-ghost" data-x>閉じる</button>
+    </div>`);
+  ov.querySelector('[data-x]').onclick = () => ov.remove();
+  ov.querySelector('[data-front]').onclick = () => {
+    $('#printArea').innerHTML = frontHTML;
+    setTimeout(() => window.print(), 60);
+  };
+  ov.querySelector('[data-back]').onclick = () => {
+    $('#printArea').innerHTML = backHTML;
+    setTimeout(() => window.print(), 60);
+  };
 }
 
 /* ---- CSV書き出し（スプレッドシート用） ---- */
