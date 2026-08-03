@@ -1,0 +1,1210 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#F2F3F5">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="manifest" href="manifest.json">
+<title>仕事メモ</title>
+<style>
+:root{
+  --bg:#F2F3F5;
+  --surface:#FFFFFF;
+  --ink:#1B1D21;
+  --muted:#6B7078;
+  --line:#DFE2E6;
+  --memo:#1F6FEB;
+  --proc:#E8722C;
+  --prod:#2E8B72;
+  --todo:#7B5EA7;
+  --eng:#C1477E;
+  --danger:#C4392F;
+  --radius:8px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{margin:0;padding:0;}
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic UI","Meiryo",sans-serif;
+  font-size:16px;
+  line-height:1.7;
+  padding-bottom:180px;
+  -webkit-text-size-adjust:100%;
+}
+button,input,textarea{font-family:inherit;font-size:16px;color:inherit;}
+button{cursor:pointer;border:none;background:none;padding:0;}
+
+/* ---------- ヘッダー ---------- */
+header{
+  position:sticky;top:0;z-index:30;
+  background:var(--surface);
+  border-bottom:1px solid var(--line);
+  padding:env(safe-area-inset-top) 0 0;
+}
+.head-row{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 14px 0;
+}
+h1{font-size:17px;font-weight:700;margin:0;letter-spacing:.04em;}
+.tools{display:flex;gap:6px;}
+.tool-btn{
+  border:1px solid var(--line);border-radius:6px;
+  padding:5px 9px;font-size:12px;color:var(--muted);background:var(--surface);
+}
+.tool-btn.on{background:#FFE066;border-color:#E6C84D;color:#5A4A00;font-weight:700;}
+.tools{flex-wrap:wrap;justify-content:flex-end;}
+mark{background:#FFE066;color:inherit;border-radius:2px;padding:0 1px;}
+.tabs{display:flex;gap:0;padding:10px 14px 0;}
+.tab{
+  flex:1;padding:9px 0 11px;text-align:center;
+  font-size:14px;font-weight:700;color:var(--muted);
+  border-bottom:3px solid transparent;
+}
+.tab.on[data-tab="memo"]{color:var(--memo);border-bottom-color:var(--memo);}
+.tab.on[data-tab="proc"]{color:var(--proc);border-bottom-color:var(--proc);}
+.tab.on[data-tab="prod"]{color:var(--prod);border-bottom-color:var(--prod);}
+.tab.on[data-tab="todo"]{color:var(--todo);border-bottom-color:var(--todo);}
+.tab.on[data-tab="eng"]{color:var(--eng);border-bottom-color:var(--eng);}
+.tabs{overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+.tabs::-webkit-scrollbar{display:none;}
+.tab{font-size:11.5px;padding:9px 2px 10px;flex:1 0 auto;min-width:64px;white-space:nowrap;}
+
+.search-wrap{padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--line);}
+.search-wrap input{
+  width:100%;padding:9px 12px;border:1px solid var(--line);
+  border-radius:var(--radius);background:var(--bg);
+}
+.search-wrap input:focus{outline:2px solid var(--memo);outline-offset:-1px;}
+
+main{padding:14px;max-width:720px;margin:0 auto;}
+.hidden{display:none !important;}
+
+/* ---------- カテゴリ ---------- */
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;}
+.chip{
+  border:1px solid var(--line);background:var(--surface);
+  border-radius:999px;padding:6px 13px;font-size:13px;color:var(--muted);
+}
+.chip.on{background:var(--memo);border-color:var(--memo);color:#fff;font-weight:700;}
+.chip.add{border-style:dashed;color:var(--memo);}
+
+/* ---------- メモカード ---------- */
+.card{
+  background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--radius);padding:13px 14px;margin-bottom:10px;
+}
+.card-meta{
+  display:flex;align-items:center;gap:8px;
+  font-size:11.5px;color:var(--muted);margin-bottom:6px;
+}
+.tag{
+  border:1px solid var(--line);border-radius:4px;
+  padding:1px 6px;font-size:11px;color:var(--muted);
+}
+.card-body{white-space:pre-wrap;word-break:break-word;}
+.card-acts{display:flex;gap:14px;margin-top:9px;}
+.card-acts button{font-size:12.5px;color:var(--muted);}
+.card-acts .del{color:var(--danger);}
+
+/* ---------- 手順書 ---------- */
+.proc-item{
+  background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--radius);padding:14px;margin-bottom:10px;
+}
+.proc-title{font-size:16px;font-weight:700;margin:0 0 3px;}
+.proc-sub{font-size:11.5px;color:var(--muted);}
+.steps{list-style:none;margin:11px 0 0;padding:0;counter-reset:s;}
+.steps li{
+  counter-increment:s;position:relative;
+  padding:7px 0 7px 34px;border-top:1px solid var(--line);
+  white-space:pre-wrap;word-break:break-word;
+}
+.steps li::before{
+  content:counter(s);position:absolute;left:0;top:9px;
+  width:22px;height:22px;border-radius:4px;
+  background:var(--proc);color:#fff;
+  font-size:12px;font-weight:700;line-height:22px;text-align:center;
+}
+.step-edit{display:flex;gap:6px;align-items:flex-start;}
+.step-edit textarea{flex:1;}
+.step-tools{display:flex;flex-direction:column;gap:3px;}
+.step-tools button{
+  width:30px;height:26px;border:1px solid var(--line);border-radius:5px;
+  font-size:12px;color:var(--muted);background:var(--surface);
+}
+/* ---------- 製品知識 ---------- */
+.prod-item{
+  background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--radius);padding:14px;margin-bottom:10px;
+  border-left:3px solid var(--prod);
+}
+.prod-name{font-size:16px;font-weight:700;margin:0;}
+.prod-maker{font-size:11.5px;color:var(--muted);margin-top:2px;}
+.facts{list-style:none;margin:10px 0 0;padding:0;}
+.facts li{
+  padding:8px 0;border-top:1px solid var(--line);
+  white-space:pre-wrap;word-break:break-word;
+}
+.fact-date{display:block;font-size:11px;color:var(--muted);margin-top:3px;}
+/* ---------- 調べること ---------- */
+.todo-item{
+  background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--radius);padding:12px 14px;margin-bottom:9px;
+  border-left:3px solid var(--todo);
+}
+.todo-item.done{border-left-color:var(--line);opacity:.68;}
+.todo-row{display:flex;align-items:flex-start;gap:10px;}
+.todo-row input[type="checkbox"]{
+  width:20px;height:20px;flex-shrink:0;margin-top:2px;accent-color:var(--todo);
+}
+.todo-text{flex:1;white-space:pre-wrap;word-break:break-word;}
+.todo-item.done .todo-text{text-decoration:line-through;text-decoration-color:var(--muted);}
+.todo-meta{font-size:11px;color:var(--muted);margin-top:3px;margin-left:30px;}
+.todo-note{
+  margin:8px 0 0 30px;padding:8px 10px;background:var(--bg);
+  border-radius:6px;font-size:13.5px;white-space:pre-wrap;word-break:break-word;
+}
+.todo-acts{display:flex;gap:14px;margin-top:8px;margin-left:30px;}
+.todo-acts button{font-size:12.5px;color:var(--muted);}
+.todo-acts .del{color:var(--danger);}
+
+/* ---------- 英語 ---------- */
+.eng-item{
+  background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--radius);padding:13px 14px;margin-bottom:10px;
+  border-left:3px solid var(--eng);
+}
+.eng-item .card-meta{margin-bottom:6px;}
+
+.notice{
+  background:#FFF8E6;border:1px solid #EAD9A0;border-radius:var(--radius);
+  padding:11px 13px;font-size:12.5px;color:#6B5A20;margin-bottom:14px;
+}
+.empty{
+  border:1px dashed var(--line);border-radius:var(--radius);
+  padding:26px 16px;text-align:center;color:var(--muted);font-size:13.5px;
+}
+
+/* ---------- 下部の入力バー ---------- */
+.composer{
+  position:fixed;left:0;right:0;bottom:0;z-index:40;
+  background:var(--surface);border-top:1px solid var(--line);
+  padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+}
+.composer .inner{max-width:720px;margin:0 auto;}
+.composer textarea{
+  width:100%;min-height:64px;max-height:200px;padding:10px 12px;
+  border:1px solid var(--line);border-radius:var(--radius);
+  background:var(--bg);resize:vertical;
+}
+.composer textarea:focus{outline:2px solid var(--memo);outline-offset:-1px;}
+.composer-row{display:flex;align-items:center;gap:10px;margin-top:8px;}
+.hint{flex:1;font-size:11.5px;color:var(--muted);line-height:1.4;}
+.save{
+  background:var(--memo);color:#fff;font-weight:700;font-size:14px;
+  padding:10px 22px;border-radius:var(--radius);white-space:nowrap;
+}
+.save.proc{background:var(--proc);}
+.save.prod{background:var(--prod);}
+.save.todo{background:var(--todo);}
+.save.eng{background:var(--eng);}
+.save:disabled{background:#B9BEC5;}
+
+/* ---------- モーダル ---------- */
+.overlay{
+  position:fixed;inset:0;z-index:60;background:rgba(20,22,26,.45);
+  display:flex;align-items:center;justify-content:center;padding:22px;
+}
+.modal{
+  background:var(--surface);border-radius:12px;padding:18px;
+  width:100%;max-width:420px;
+}
+.modal h2{font-size:15px;margin:0 0 12px;}
+.modal input,.modal textarea{
+  width:100%;padding:10px 12px;border:1px solid var(--line);
+  border-radius:var(--radius);background:var(--bg);margin-bottom:10px;
+}
+.modal-acts{display:flex;justify-content:flex-end;gap:8px;margin-top:4px;}
+.modal-acts button{padding:9px 16px;border-radius:var(--radius);font-size:14px;}
+.btn-ghost{color:var(--muted);border:1px solid var(--line);}
+.btn-solid{background:var(--memo);color:#fff;font-weight:700;}
+.btn-solid.proc{background:var(--proc);}
+.btn-solid.prod{background:var(--prod);}
+.btn-solid.todo{background:var(--todo);}
+.btn-solid.eng{background:var(--eng);}
+.btn-solid.danger{background:var(--danger);}
+
+.toast{
+  position:fixed;left:50%;bottom:200px;transform:translateX(-50%);
+  background:var(--ink);color:#fff;font-size:13px;
+  padding:9px 16px;border-radius:999px;z-index:80;
+}
+
+#printArea{display:none;}
+.psheet{
+  width:210mm;min-height:297mm;
+  display:flex;flex-direction:column;align-items:center;
+  page-break-after:always;
+}
+.psheet:last-child{page-break-after:auto;}
+.pcard{
+  width:119mm;min-height:148mm;box-sizing:border-box;
+  padding:5mm 6mm 5mm 13mm;
+  border:0.3mm dashed #aaa;
+  break-inside:avoid-page;
+  font-family:-apple-system,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
+  color:#000;
+}
+.pcard-head{font-size:7pt;font-weight:700;margin-bottom:1mm;}
+.pcard-meta{font-size:5pt;color:#555;margin-bottom:2mm;}
+.pcard-body{font-size:6pt;line-height:1.55;white-space:pre-wrap;word-break:break-word;}
+.pcard-body ol.psteps,.pcard-body ul.pfacts{margin:0;padding-left:4mm;}
+.pcard-body li{margin-bottom:1.2mm;}
+.pnote{margin-top:1.5mm;font-size:6pt;color:#333;}
+@media print{
+  header,.composer,.card-acts,.chips,.tool-btn,.toast,.search-wrap,main{display:none !important;}
+  body{background:#fff;padding:0;margin:0;}
+  #printArea{display:block;}
+  *{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;}
+  @page{size:A4;margin:0;}
+}
+@media (prefers-reduced-motion:no-preference){
+  .card,.proc-item,.prod-item,.todo-item,.eng-item{animation:in .16s ease-out;}
+  @keyframes in{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:none;}}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="head-row">
+    <h1>仕事メモ</h1>
+    <div class="tools">
+      <button class="tool-btn" id="btnExport">書出し</button>
+      <button class="tool-btn" id="btnImport">読込み</button>
+      <button class="tool-btn" id="btnCSV">CSV</button>
+      <button class="tool-btn" id="btnHL">🖍 マーカー</button>
+      <button class="tool-btn" id="btnPrint">印刷</button>
+    </div>
+  </div>
+  <div class="tabs">
+    <button class="tab on" data-tab="memo">とりあえず入力</button>
+    <button class="tab" data-tab="proc">手順書</button>
+    <button class="tab" data-tab="prod">製品知識</button>
+    <button class="tab" data-tab="todo">調べること</button>
+    <button class="tab" data-tab="eng">英語</button>
+  </div>
+  <div class="search-wrap">
+    <input type="search" id="search" placeholder="ぜんぶの中から探す">
+  </div>
+</header>
+
+<main>
+  <!-- とりあえず入力 -->
+  <section id="viewMemo">
+    <div class="chips" id="chips"></div>
+    <div id="memoList"></div>
+  </section>
+
+  <!-- 手順書 -->
+  <section id="viewProc" class="hidden">
+    <div id="procList"></div>
+  </section>
+
+  <!-- 製品知識 -->
+  <section id="viewProd" class="hidden">
+    <div id="prodList"></div>
+  </section>
+
+  <!-- 調べること -->
+  <section id="viewTodo" class="hidden">
+    <div id="todoList"></div>
+  </section>
+
+  <!-- 英語 -->
+  <section id="viewEng" class="hidden">
+    <div id="engList"></div>
+  </section>
+</main>
+
+<!-- 下部入力バー -->
+<div class="composer" id="composer">
+  <div class="inner">
+    <textarea id="quick" placeholder="思いついたことをそのまま入れる"></textarea>
+    <div class="composer-row">
+      <div class="hint" id="hint">キーボードのマイクを押すと音声で入力できます</div>
+      <button class="save" id="btnQuickSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="fileInput" accept="application/json,.json" style="display:none">
+<div id="printArea"></div>
+
+<script>
+/* ============ データ ============ */
+const KEY = 'work-memo-v1';
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+
+let state = {
+  categories: [
+    {id:'c1', name:'注意事項'},
+    {id:'c2', name:'引き継ぎ'},
+    {id:'c3', name:'その他'}
+  ],
+  memos: [],
+  procs: [],
+  products: [],
+  todos: [],
+  english: []
+};
+let tab = 'memo';
+let activeCat = 'all';
+let query = '';
+
+function load(){
+  try{
+    const raw = localStorage.getItem(KEY);
+    if(raw){
+      const d = JSON.parse(raw);
+      if(d && Array.isArray(d.categories)){
+        state = d;
+        if(!Array.isArray(state.products)) state.products = [];
+        if(!Array.isArray(state.procs)) state.procs = [];
+        if(!Array.isArray(state.todos)) state.todos = [];
+        if(!Array.isArray(state.english)) state.english = [];
+        if(!state._migEnglishTab){
+          const engCat = state.categories.find(c => c.name === '英語');
+          if(engCat){
+            state.memos.filter(m => m.catId === engCat.id).forEach(m => {
+              state.english.push({id:uid(), text:m.text, created:m.created});
+            });
+            state.memos = state.memos.filter(m => m.catId !== engCat.id);
+            state.categories = state.categories.filter(c => c.id !== engCat.id);
+          }
+          state._migEnglishTab = true;
+          save();
+        }
+      }
+    }
+  }catch(e){ console.error(e); }
+}
+function save(){
+  try{ localStorage.setItem(KEY, JSON.stringify(state)); }
+  catch(e){ toast('保存できませんでした'); }
+}
+
+/* ============ 表示のユーティリティ ============ */
+const $ = s => document.querySelector(s);
+function fmt(ts){
+  const d = new Date(ts);
+  const w = ['日','月','火','水','木','金','土'][d.getDay()];
+  return `${d.getMonth()+1}月${d.getDate()}日(${w}) ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+function esc(s){
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function catName(id){
+  const c = state.categories.find(c => c.id === id);
+  return c ? c.name : '未分類';
+}
+function toast(msg){
+  const el = document.createElement('div');
+  el.className = 'toast'; el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 1900);
+}
+
+/* ============ ハイライト ============ */
+let hlMode = false;
+function mergeRanges(ranges){
+  const sorted = ranges.slice().sort((a,b) => a[0]-b[0]);
+  const out = [];
+  for(const r of sorted){
+    if(out.length && r[0] <= out[out.length-1][1]) out[out.length-1][1] = Math.max(out[out.length-1][1], r[1]);
+    else out.push([r[0], r[1]]);
+  }
+  return out;
+}
+function hlHTML(text, ranges){
+  text = text || '';
+  if(!ranges || !ranges.length) return esc(text);
+  const rs = mergeRanges(ranges);
+  let out = '', pos = 0;
+  rs.forEach(([s,e]) => {
+    s = Math.max(0, Math.min(s, text.length));
+    e = Math.max(0, Math.min(e, text.length));
+    if(e <= pos) return;
+    out += esc(text.slice(pos, s));
+    out += '<mark>' + esc(text.slice(s, e)) + '</mark>';
+    pos = e;
+  });
+  out += esc(text.slice(pos));
+  return out;
+}
+function hlResolve(key){
+  const parts = key.split(':');
+  const type = parts[0];
+  if(type === 'memo') return state.memos.find(x => x.id === parts[1]);
+  if(type === 'procstep'){
+    const p = state.procs.find(x => x.id === parts[1]);
+    return p && p.steps.find(x => x.id === parts[2]);
+  }
+  if(type === 'prodfact'){
+    const p = state.products.find(x => x.id === parts[1]);
+    return p && p.facts.find(x => x.id === parts[2]);
+  }
+  if(type === 'todotext') return state.todos.find(x => x.id === parts[1]);
+  if(type === 'tododnote'){
+    const t = state.todos.find(x => x.id === parts[1]);
+    if(!t) return null;
+    return {
+      get text(){ return t.note; },
+      get highlights(){ if(!t.noteHighlights) t.noteHighlights = []; return t.noteHighlights; },
+      set highlights(v){ t.noteHighlights = v; }
+    };
+  }
+  if(type === 'eng') return state.english.find(x => x.id === parts[1]);
+  return null;
+}
+function getOffsetsWithin(container, range){
+  const preStart = document.createRange();
+  preStart.selectNodeContents(container);
+  preStart.setEnd(range.startContainer, range.startOffset);
+  const start = preStart.toString().length;
+  const preEnd = document.createRange();
+  preEnd.selectNodeContents(container);
+  preEnd.setEnd(range.endContainer, range.endOffset);
+  const end = preEnd.toString().length;
+  return [start, end];
+}
+function onSelectionEnd(){
+  if(!hlMode) return;
+  const sel = window.getSelection();
+  if(!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+  const range = sel.getRangeAt(0);
+  let container = range.commonAncestorContainer;
+  if(container.nodeType === 3) container = container.parentElement;
+  const hlEl = container.closest('[data-hlkey]');
+  if(!hlEl || !hlEl.contains(range.startContainer) || !hlEl.contains(range.endContainer)){
+    sel.removeAllRanges();
+    if(hlEl === null) return;
+    toast('1つの項目内で選んでください');
+    return;
+  }
+  const [s, e] = getOffsetsWithin(hlEl, range);
+  sel.removeAllRanges();
+  if(e <= s) return;
+  const obj = hlResolve(hlEl.dataset.hlkey);
+  if(!obj) return;
+  obj.highlights = mergeRanges((obj.highlights || []).concat([[s, e]]));
+  save(); render();
+  toast('ハイライトしました');
+}
+document.addEventListener('mouseup', onSelectionEnd);
+document.addEventListener('touchend', onSelectionEnd);
+document.addEventListener('click', e => {
+  if(!hlMode) return;
+  const markEl = e.target.closest('mark');
+  if(!markEl) return;
+  const hlEl = markEl.closest('[data-hlkey]');
+  if(!hlEl) return;
+  const idx = Array.from(hlEl.querySelectorAll('mark')).indexOf(markEl);
+  const obj = hlResolve(hlEl.dataset.hlkey);
+  if(!obj || !obj.highlights || idx < 0) return;
+  const hl = obj.highlights.slice();
+  hl.splice(idx, 1);
+  obj.highlights = hl;
+  save(); render();
+  toast('ハイライトを消しました');
+});
+
+/* ============ 描画 ============ */
+function render(){
+  $('#viewMemo').classList.toggle('hidden', tab !== 'memo');
+  $('#viewProc').classList.toggle('hidden', tab !== 'proc');
+  $('#viewProd').classList.toggle('hidden', tab !== 'prod');
+  $('#viewTodo').classList.toggle('hidden', tab !== 'todo');
+  $('#viewEng').classList.toggle('hidden', tab !== 'eng');
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+
+  const q = $('#quick'), s = $('#btnQuickSave');
+  s.classList.remove('proc','prod','todo','eng');
+  if(tab === 'memo'){
+    q.style.display = ''; q.placeholder = '思いついたことをそのまま入れる';
+    s.textContent = '保存';
+    $('#hint').textContent = 'キーボードのマイクを押すと音声で入力できます';
+  }else if(tab === 'proc'){
+    q.style.display = 'none';
+    s.textContent = '手順書を作る'; s.classList.add('proc');
+    $('#hint').textContent = '手順を1から順番に書いていくページです';
+  }else if(tab === 'prod'){
+    q.style.display = 'none';
+    s.textContent = '製品を登録'; s.classList.add('prod');
+    $('#hint').textContent = '製品ごとに、覚えたことを足していけます';
+  }else if(tab === 'todo'){
+    q.style.display = ''; q.placeholder = '調べたいことをそのまま入れる';
+    s.textContent = '追加'; s.classList.add('todo');
+    $('#hint').textContent = 'チェックを付けると「調べ済み」になります';
+  }else{
+    q.style.display = ''; q.placeholder = '覚えた表現や気になった英語を入れる';
+    s.textContent = '保存'; s.classList.add('eng');
+    $('#hint').textContent = 'キーボードのマイクを押すと音声で入力できます';
+  }
+
+  if(tab === 'memo') renderMemo();
+  else if(tab === 'proc') renderProc();
+  else if(tab === 'prod') renderProd();
+  else if(tab === 'todo') renderTodo();
+  else renderEnglish();
+}
+
+function renderMemo(){
+  // カテゴリ
+  const chips = ['<button class="chip'+(activeCat==='all'?' on':'')+'" data-cat="all">すべて</button>'];
+  state.categories.forEach(c => {
+    chips.push('<button class="chip'+(activeCat===c.id?' on':'')+'" data-cat="'+c.id+'">'+esc(c.name)+'</button>');
+  });
+  chips.push('<button class="chip add" id="chipAdd">＋ ページを追加</button>');
+  if(activeCat !== 'all') chips.push('<button class="chip" id="chipDel">このページを消す</button>');
+  $('#chips').innerHTML = chips.join('');
+
+  // 一覧（新しい順）
+  let list = state.memos.slice().sort((a,b) => b.created - a.created);
+  if(activeCat !== 'all') list = list.filter(m => m.catId === activeCat);
+  if(query) list = list.filter(m => m.text.toLowerCase().includes(query));
+
+  if(!list.length){
+    $('#memoList').innerHTML = '<div class="empty">'+
+      (query ? '見つかりませんでした' : '下の欄に入れると、新しい順にここへ並びます')+'</div>';
+    return;
+  }
+  $('#memoList').innerHTML = list.map(m => `
+    <article class="card">
+      <div class="card-meta"><span class="tag">${esc(catName(m.catId))}</span><span>${fmt(m.created)}</span></div>
+      <div class="card-body" data-hlkey="memo:${m.id}">${hlHTML(m.text, m.highlights)}</div>
+      <div class="card-acts">
+        <button data-edit="${m.id}">直す</button>
+        <button data-move="${m.id}">ページを変える</button>
+        <button class="del" data-del="${m.id}">消す</button>
+      </div>
+    </article>`).join('');
+}
+
+function renderProc(){
+  let list = state.procs.slice().sort((a,b) => b.updated - a.updated);
+  if(query){
+    list = list.filter(p =>
+      p.title.toLowerCase().includes(query) ||
+      p.steps.some(s => s.text.toLowerCase().includes(query)));
+  }
+  if(!list.length){
+    $('#procList').innerHTML = '<div class="empty">'+
+      (query ? '見つかりませんでした' : '「手順書を作る」から、番号つきの手順を書けます')+'</div>';
+    return;
+  }
+  $('#procList').innerHTML = list.map(p => `
+    <article class="proc-item">
+      <h2 class="proc-title">${esc(p.title)}</h2>
+      <div class="proc-sub">${p.steps.length}ステップ・${fmt(p.updated)}</div>
+      <ol class="steps">${p.steps.map(s => '<li data-hlkey="procstep:'+p.id+':'+s.id+'">'+hlHTML(s.text, s.highlights)+'</li>').join('')}</ol>
+      <div class="card-acts">
+        <button data-pedit="${p.id}">手順を直す</button>
+        <button class="del" data-pdel="${p.id}">消す</button>
+      </div>
+    </article>`).join('');
+}
+
+function renderProd(){
+  let list = state.products.slice().sort((a,b) => a.name.localeCompare(b.name,'ja'));
+  if(query){
+    list = list.filter(p =>
+      p.name.toLowerCase().includes(query) ||
+      (p.maker||'').toLowerCase().includes(query) ||
+      p.facts.some(f => f.text.toLowerCase().includes(query)));
+  }
+  if(!list.length){
+    $('#prodList').innerHTML = '<div class="empty">'+
+      (query ? '見つかりませんでした' : '「製品を登録」から始めます。あとから覚えたことを足していけます')+'</div>';
+    return;
+  }
+  $('#prodList').innerHTML = list.map(p => {
+    let facts = p.facts;
+    if(query) facts = facts.filter(f => f.text.toLowerCase().includes(query)).length
+      ? facts : facts; // 名前ヒット時はすべて表示
+    return `
+    <article class="prod-item">
+      <h2 class="prod-name">${esc(p.name)}</h2>
+      ${p.maker ? '<div class="prod-maker">'+esc(p.maker)+'</div>' : ''}
+      ${facts.length ? '<ul class="facts">'+facts.map(f =>
+        '<li><span data-hlkey="prodfact:'+p.id+':'+f.id+'">'+hlHTML(f.text, f.highlights)+'</span><span class="fact-date">'+fmt(f.created)+'</span></li>').join('')+'</ul>'
+        : '<div class="prod-maker" style="margin-top:8px">まだ何も入っていません</div>'}
+      <div class="card-acts">
+        <button data-fadd="${p.id}">覚えたことを足す</button>
+        <button data-fedit="${p.id}">中身を直す</button>
+        <button class="del" data-pkdel="${p.id}">消す</button>
+      </div>
+    </article>`;
+  }).join('');
+}
+
+function renderTodo(){
+  let list = state.todos.slice();
+  if(query) list = list.filter(t => t.text.toLowerCase().includes(query) || (t.note||'').toLowerCase().includes(query));
+  const open = list.filter(t => !t.done).sort((a,b) => b.created - a.created);
+  const done = list.filter(t => t.done).sort((a,b) => (b.checkedAt||0) - (a.checkedAt||0));
+  list = open.concat(done);
+
+  if(!list.length){
+    $('#todoList').innerHTML = '<div class="empty">'+
+      (query ? '見つかりませんでした' : '下の欄に、気になって調べたいことを入れておけます')+'</div>';
+    return;
+  }
+  $('#todoList').innerHTML = list.map(t => `
+    <article class="todo-item${t.done?' done':''}">
+      <div class="todo-row">
+        <input type="checkbox" data-check="${t.id}" ${t.done?'checked':''}>
+        <div class="todo-text" data-hlkey="todotext:${t.id}">${hlHTML(t.text, t.highlights)}</div>
+      </div>
+      <div class="todo-meta">${fmt(t.created)}${t.done ? '・調べ済み' : ''}</div>
+      ${t.note ? '<div class="todo-note" data-hlkey="tododnote:'+t.id+'">'+hlHTML(t.note, t.noteHighlights)+'</div>' : ''}
+      <div class="todo-acts">
+        <button data-note="${t.id}">${t.note ? '分かったことを直す' : '分かったことを書く'}</button>
+        <button data-tedit="${t.id}">直す</button>
+        <button class="del" data-tdel="${t.id}">消す</button>
+      </div>
+    </article>`).join('');
+}
+
+function renderEnglish(){
+  let list = state.english.slice().sort((a,b) => b.created - a.created);
+  if(query) list = list.filter(e => e.text.toLowerCase().includes(query));
+  if(!list.length){
+    $('#engList').innerHTML = '<div class="empty">'+
+      (query ? '見つかりませんでした' : '下の欄に入れると、新しい順にここへ並びます')+'</div>';
+    return;
+  }
+  $('#engList').innerHTML = list.map(e => `
+    <article class="eng-item">
+      <div class="card-meta"><span>${fmt(e.created)}</span></div>
+      <div class="card-body" data-hlkey="eng:${e.id}">${hlHTML(e.text, e.highlights)}</div>
+      <div class="card-acts">
+        <button data-eedit="${e.id}">直す</button>
+        <button class="del" data-edel="${e.id}">消す</button>
+      </div>
+    </article>`).join('');
+}
+
+/* ============ モーダル ============ */
+function modal(html){
+  const ov = document.createElement('div');
+  ov.className = 'overlay';
+  ov.innerHTML = '<div class="modal">'+html+'</div>';
+  document.body.appendChild(ov);
+  ov.addEventListener('click', e => { if(e.target === ov) ov.remove(); });
+  return ov;
+}
+
+function askText(title, initial, onOk, multiline){
+  const field = multiline
+    ? '<textarea id="mv" rows="5"></textarea>'
+    : '<input id="mv" type="text">';
+  const ov = modal(`<h2>${esc(title)}</h2>${field}
+    <div class="modal-acts">
+      <button class="btn-ghost" data-x>やめる</button>
+      <button class="btn-solid${tab==='proc'?' proc':(tab==='prod'?' prod':(tab==='todo'?' todo':(tab==='eng'?' eng':'')))}" data-ok>決定</button>
+    </div>`);
+  const inp = ov.querySelector('#mv');
+  inp.value = initial || '';
+  setTimeout(() => inp.focus(), 40);
+  ov.querySelector('[data-x]').onclick = () => ov.remove();
+  ov.querySelector('[data-ok]').onclick = () => {
+    const v = inp.value.trim();
+    if(!v) return;
+    ov.remove(); onOk(v);
+  };
+}
+
+function confirmDel(message, onOk){
+  const ov = modal(`<h2>${esc(message)}</h2>
+    <div class="modal-acts">
+      <button class="btn-ghost" data-x>やめる</button>
+      <button class="btn-solid danger" data-ok>消す</button>
+    </div>`);
+  ov.querySelector('[data-x]').onclick = () => ov.remove();
+  ov.querySelector('[data-ok]').onclick = () => { ov.remove(); onOk(); };
+}
+
+/* ---- 手順書エディタ ---- */
+function editProc(id){
+  const isNew = !id;
+  const p = isNew
+    ? {id:uid(), title:'', steps:[{id:uid(), text:''}], created:Date.now(), updated:Date.now()}
+    : JSON.parse(JSON.stringify(state.procs.find(x => x.id === id)));
+
+  const ov = modal(`
+    <h2>${isNew ? '手順書を作る' : '手順書を直す'}</h2>
+    <input id="pt" type="text" placeholder="何の手順か（例：朝の開店準備）">
+    <div id="steps"></div>
+    <button class="tool-btn" id="addStep" style="margin-top:2px">＋ ステップを足す</button>
+    <div class="modal-acts">
+      <button class="btn-ghost" data-x>やめる</button>
+      <button class="btn-solid proc" data-ok>保存</button>
+    </div>`);
+
+  ov.querySelector('#pt').value = p.title;
+
+  function drawSteps(){
+    const box = ov.querySelector('#steps');
+    box.innerHTML = p.steps.map((s,i) => `
+      <div class="step-edit" style="margin-bottom:8px">
+        <textarea rows="2" data-i="${i}" placeholder="${i+1}つめの手順"></textarea>
+        <div class="step-tools">
+          <button data-up="${i}" ${i===0?'disabled':''}>↑</button>
+          <button data-down="${i}" ${i===p.steps.length-1?'disabled':''}>↓</button>
+          <button data-rm="${i}">×</button>
+        </div>
+      </div>`).join('');
+    box.querySelectorAll('textarea').forEach(t => {
+      t.value = p.steps[+t.dataset.i].text;
+      t.oninput = () => { p.steps[+t.dataset.i].text = t.value; };
+    });
+    box.querySelectorAll('[data-up]').forEach(b => b.onclick = () => {
+      const i = +b.dataset.up; [p.steps[i-1], p.steps[i]] = [p.steps[i], p.steps[i-1]]; drawSteps();
+    });
+    box.querySelectorAll('[data-down]').forEach(b => b.onclick = () => {
+      const i = +b.dataset.down; [p.steps[i+1], p.steps[i]] = [p.steps[i], p.steps[i+1]]; drawSteps();
+    });
+    box.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => {
+      if(p.steps.length === 1) return;
+      p.steps.splice(+b.dataset.rm, 1); drawSteps();
+    });
+  }
+  drawSteps();
+
+  ov.querySelector('#addStep').onclick = () => { p.steps.push({id:uid(), text:''}); drawSteps(); };
+  ov.querySelector('[data-x]').onclick = () => ov.remove();
+  ov.querySelector('[data-ok]').onclick = () => {
+    p.title = ov.querySelector('#pt').value.trim() || '無題の手順書';
+    p.steps = p.steps.filter(s => s.text.trim());
+    if(!p.steps.length){ toast('手順を1つ以上入れてください'); return; }
+    p.updated = Date.now();
+    if(isNew) state.procs.push(p);
+    else state.procs[state.procs.findIndex(x => x.id === p.id)] = p;
+    save(); ov.remove(); render(); toast('保存しました');
+  };
+}
+
+/* ---- 製品の登録 ---- */
+function newProduct(){
+  const ov = modal(`<h2>製品を登録</h2>
+    <input id="pn" type="text" placeholder="製品名">
+    <input id="pm" type="text" placeholder="メーカー・型番など（任意）">
+    <textarea id="pf" rows="3" placeholder="覚えていること（任意・あとからでOK）"></textarea>
+    <div class="modal-acts">
+      <button class="btn-ghost" data-x>やめる</button>
+      <button class="btn-solid prod" data-ok>登録</button>
+    </div>`);
+  setTimeout(() => ov.querySelector('#pn').focus(), 40);
+  ov.querySelector('[data-x]').onclick = () => ov.remove();
+  ov.querySelector('[data-ok]').onclick = () => {
+    const name = ov.querySelector('#pn').value.trim();
+    if(!name){ toast('製品名を入れてください'); return; }
+    const first = ov.querySelector('#pf').value.trim();
+    state.products.push({
+      id:uid(), name,
+      maker: ov.querySelector('#pm').value.trim(),
+      facts: first ? [{id:uid(), text:first, created:Date.now()}] : [],
+      created:Date.now()
+    });
+    save(); ov.remove(); render(); toast('登録しました');
+  };
+}
+
+/* ---- 製品の中身を直す ---- */
+function editProduct(id){
+  const p = JSON.parse(JSON.stringify(state.products.find(x => x.id === id)));
+  const ov = modal(`<h2>中身を直す</h2>
+    <input id="pn" type="text" placeholder="製品名">
+    <input id="pm" type="text" placeholder="メーカー・型番など">
+    <div id="facts"></div>
+    <button class="tool-btn" id="addFact" style="margin-top:2px">＋ 1件足す</button>
+    <div class="modal-acts">
+      <button class="btn-ghost" data-x>やめる</button>
+      <button class="btn-solid prod" data-ok>保存</button>
+    </div>`);
+  ov.querySelector('#pn').value = p.name;
+  ov.querySelector('#pm').value = p.maker || '';
+
+  function drawFacts(){
+    const box = ov.querySelector('#facts');
+    box.innerHTML = p.facts.map((f,i) => `
+      <div class="step-edit" style="margin-bottom:8px">
+        <textarea rows="2" data-i="${i}"></textarea>
+        <div class="step-tools">
+          <button data-up="${i}" ${i===0?'disabled':''}>↑</button>
+          <button data-down="${i}" ${i===p.facts.length-1?'disabled':''}>↓</button>
+          <button data-rm="${i}">×</button>
+        </div>
+      </div>`).join('');
+    box.querySelectorAll('textarea').forEach(t => {
+      t.value = p.facts[+t.dataset.i].text;
+      t.oninput = () => { p.facts[+t.dataset.i].text = t.value; };
+    });
+    box.querySelectorAll('[data-up]').forEach(b => b.onclick = () => {
+      const i = +b.dataset.up; [p.facts[i-1], p.facts[i]] = [p.facts[i], p.facts[i-1]]; drawFacts();
+    });
+    box.querySelectorAll('[data-down]').forEach(b => b.onclick = () => {
+      const i = +b.dataset.down; [p.facts[i+1], p.facts[i]] = [p.facts[i], p.facts[i+1]]; drawFacts();
+    });
+    box.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => {
+      p.facts.splice(+b.dataset.rm, 1); drawFacts();
+    });
+  }
+  drawFacts();
+
+  ov.querySelector('#addFact').onclick = () => {
+    p.facts.push({id:uid(), text:'', created:Date.now()}); drawFacts();
+  };
+  ov.querySelector('[data-x]').onclick = () => ov.remove();
+  ov.querySelector('[data-ok]').onclick = () => {
+    const name = ov.querySelector('#pn').value.trim();
+    if(!name){ toast('製品名を入れてください'); return; }
+    p.name = name;
+    p.maker = ov.querySelector('#pm').value.trim();
+    p.facts = p.facts.filter(f => f.text.trim());
+    state.products[state.products.findIndex(x => x.id === p.id)] = p;
+    save(); ov.remove(); render(); toast('保存しました');
+  };
+}
+
+/* ============ 操作 ============ */
+document.querySelectorAll('.tab').forEach(b => b.onclick = () => { tab = b.dataset.tab; render(); });
+
+$('#btnHL').onclick = () => {
+  hlMode = !hlMode;
+  $('#btnHL').classList.toggle('on', hlMode);
+  toast(hlMode ? 'マーカーON：黄色くしたい文字をなぞってください（マークをタップで解除）' : 'マーカーOFF');
+};
+
+$('#search').oninput = e => { query = e.target.value.trim().toLowerCase(); render(); };
+
+$('#btnQuickSave').onclick = () => {
+  if(tab === 'proc'){ editProc(null); return; }
+  if(tab === 'prod'){ newProduct(); return; }
+  const t = $('#quick').value.trim();
+  if(!t) return;
+  if(tab === 'todo'){
+    state.todos.push({id:uid(), text:t, done:false, created:Date.now(), note:''});
+    save(); $('#quick').value = ''; render(); toast('追加しました');
+    return;
+  }
+  if(tab === 'eng'){
+    state.english.push({id:uid(), text:t, created:Date.now()});
+    save(); $('#quick').value = ''; render(); toast('保存しました');
+    return;
+  }
+  const cat = activeCat === 'all' ? (state.categories[0]?.id || null) : activeCat;
+  state.memos.push({id:uid(), catId:cat, text:t, created:Date.now()});
+  save(); $('#quick').value = ''; render(); toast('保存しました');
+};
+
+$('#chips').onclick = e => {
+  const b = e.target.closest('button'); if(!b) return;
+  if(b.id === 'chipAdd'){
+    askText('ページの名前', '', name => {
+      state.categories.push({id:uid(), name}); save(); render();
+    });
+    return;
+  }
+  if(b.id === 'chipDel'){
+    const n = state.memos.filter(m => m.catId === activeCat).length;
+    confirmDel(`「${catName(activeCat)}」とメモ${n}件を消しますか？`, () => {
+      state.memos = state.memos.filter(m => m.catId !== activeCat);
+      state.categories = state.categories.filter(c => c.id !== activeCat);
+      activeCat = 'all'; save(); render();
+    });
+    return;
+  }
+  if(b.dataset.cat){ activeCat = b.dataset.cat; render(); }
+};
+
+$('#memoList').onclick = e => {
+  const b = e.target.closest('button'); if(!b) return;
+  if(b.dataset.edit){
+    const m = state.memos.find(x => x.id === b.dataset.edit);
+    askText('メモを直す', m.text, v => { m.text = v; save(); render(); }, true);
+  }
+  if(b.dataset.move){
+    const m = state.memos.find(x => x.id === b.dataset.move);
+    const opts = state.categories.map(c =>
+      `<button class="chip${c.id===m.catId?' on':''}" data-to="${c.id}" style="margin:0 6px 6px 0">${esc(c.name)}</button>`).join('');
+    const ov = modal(`<h2>どのページに移しますか</h2><div>${opts}</div>
+      <div class="modal-acts"><button class="btn-ghost" data-x>やめる</button></div>`);
+    ov.querySelector('[data-x]').onclick = () => ov.remove();
+    ov.querySelectorAll('[data-to]').forEach(x => x.onclick = () => {
+      m.catId = x.dataset.to; save(); ov.remove(); render();
+    });
+  }
+  if(b.dataset.del){
+    confirmDel('このメモを消しますか？', () => {
+      state.memos = state.memos.filter(x => x.id !== b.dataset.del); save(); render();
+    });
+  }
+};
+
+$('#procList').onclick = e => {
+  const b = e.target.closest('button'); if(!b) return;
+  if(b.dataset.pedit) editProc(b.dataset.pedit);
+  if(b.dataset.pdel){
+    confirmDel('この手順書を消しますか？', () => {
+      state.procs = state.procs.filter(x => x.id !== b.dataset.pdel); save(); render();
+    });
+  }
+};
+
+$('#prodList').onclick = e => {
+  const b = e.target.closest('button'); if(!b) return;
+  if(b.dataset.fadd){
+    const p = state.products.find(x => x.id === b.dataset.fadd);
+    askText(p.name + 'に足す', '', v => {
+      p.facts.push({id:uid(), text:v, created:Date.now()}); save(); render(); toast('足しました');
+    }, true);
+  }
+  if(b.dataset.fedit) editProduct(b.dataset.fedit);
+  if(b.dataset.pkdel){
+    const p = state.products.find(x => x.id === b.dataset.pkdel);
+    confirmDel(`「${p.name}」を消しますか？`, () => {
+      state.products = state.products.filter(x => x.id !== b.dataset.pkdel); save(); render();
+    });
+  }
+};
+
+$('#todoList').onclick = e => {
+  const b = e.target.closest('button'); if(!b) return;
+  if(b.dataset.note){
+    const t = state.todos.find(x => x.id === b.dataset.note);
+    askText('分かったこと', t.note, v => { t.note = v; save(); render(); }, true);
+  }
+  if(b.dataset.tedit){
+    const t = state.todos.find(x => x.id === b.dataset.tedit);
+    askText('調べることを直す', t.text, v => { t.text = v; save(); render(); }, true);
+  }
+  if(b.dataset.tdel){
+    confirmDel('これを消しますか？', () => {
+      state.todos = state.todos.filter(x => x.id !== b.dataset.tdel); save(); render();
+    });
+  }
+};
+$('#todoList').onchange = e => {
+  const cb = e.target.closest('input[type="checkbox"]'); if(!cb) return;
+  const t = state.todos.find(x => x.id === cb.dataset.check);
+  t.done = cb.checked;
+  t.checkedAt = cb.checked ? Date.now() : null;
+  save(); render();
+};
+
+$('#engList').onclick = e => {
+  const b = e.target.closest('button'); if(!b) return;
+  if(b.dataset.eedit){
+    const it = state.english.find(x => x.id === b.dataset.eedit);
+    askText('英語メモを直す', it.text, v => { it.text = v; save(); render(); }, true);
+  }
+  if(b.dataset.edel){
+    confirmDel('このメモを消しますか？', () => {
+      state.english = state.english.filter(x => x.id !== b.dataset.edel); save(); render();
+    });
+  }
+};
+
+/* ---- 書き出し・読み込み・印刷 ---- */
+$('#btnExport').onclick = () => {
+  const blob = new Blob([JSON.stringify(state, null, 2)], {type:'application/json'});
+  const d = new Date();
+  const name = `仕事メモ_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.json`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast('ファイルを書き出しました');
+};
+
+$('#btnImport').onclick = () => $('#fileInput').click();
+$('#fileInput').onchange = e => {
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try{
+      const d = JSON.parse(r.result);
+      if(!d || !Array.isArray(d.categories)) throw new Error('形式が違います');
+      confirmDel('今のデータを、読み込んだ内容に置きかえますか？', () => {
+        state = {
+          categories: d.categories || [],
+          memos: d.memos || [],
+          procs: d.procs || [],
+          products: d.products || [],
+          todos: d.todos || [],
+          english: d.english || []
+        };
+        activeCat = 'all'; save(); render(); toast('読み込みました');
+      });
+    }catch(err){ toast('このファイルは読み込めません'); }
+    e.target.value = '';
+  };
+  r.readAsText(f);
+};
+
+$('#btnPrint').onclick = () => {
+  const tabDefs = [
+    {key:'memo', label:'とりあえず入力', def:false},
+    {key:'proc', label:'手順書', def:true},
+    {key:'prod', label:'製品知識', def:true},
+    {key:'todo', label:'調べること', def:true},
+    {key:'eng', label:'英語', def:false}
+  ];
+  const opts = tabDefs.map(t => `
+    <label style="display:flex;align-items:center;gap:8px;padding:9px 0;border-top:1px solid var(--line)">
+      <input type="checkbox" class="pchk" value="${t.key}" ${t.def?'checked':''} style="width:18px;height:18px">
+      ${esc(t.label)}
+    </label>`).join('');
+  const ov = modal(`<h2>印刷するタブを選ぶ</h2>
+    <div>${opts}</div>
+    <div class="modal-acts">
+      <button class="btn-ghost" data-x>やめる</button>
+      <button class="btn-solid" data-ok>印刷する</button>
+    </div>`);
+  ov.querySelector('[data-x]').onclick = () => ov.remove();
+  ov.querySelector('[data-ok]').onclick = () => {
+    const chosen = Array.from(ov.querySelectorAll('.pchk:checked')).map(c => c.value);
+    ov.remove();
+    if(!chosen.length){ toast('タブを1つ以上選んでください'); return; }
+    buildPrintView(chosen);
+    setTimeout(() => window.print(), 60);
+  };
+};
+
+let _measureHost = null;
+function getMeasureHost(){
+  if(_measureHost) return _measureHost;
+  _measureHost = document.createElement('div');
+  _measureHost.className = 'pcard';
+  _measureHost.style.position = 'fixed';
+  _measureHost.style.left = '-9999px';
+  _measureHost.style.top = '0';
+  _measureHost.style.minHeight = '0';
+  document.body.appendChild(_measureHost);
+  return _measureHost;
+}
+const MM_TO_PX = 96/25.4;
+
+function paginateList(heading, meta, liArray, listTag, listClass){
+  const build = (label, items) =>
+    `<div class="pcard"><div class="pcard-head">${esc(label)}</div><div class="pcard-meta">${esc(meta)}</div>`+
+    `<div class="pcard-body"><${listTag} class="${listClass}">${items.join('')}</${listTag}></div></div>`;
+  if(!liArray.length) return [build(heading, [])];
+
+  const maxH = 148 * MM_TO_PX;
+  const host = getMeasureHost();
+  const groups = [];
+  let current = [];
+  liArray.forEach(li => {
+    const trial = current.concat([li]);
+    host.innerHTML = `<div class="pcard-head">${esc(heading)}</div><div class="pcard-meta">${esc(meta)}</div>`+
+      `<div class="pcard-body"><${listTag} class="${listClass}">${trial.join('')}</${listTag}></div>`;
+    if(current.length && host.scrollHeight > maxH){
+      groups.push(current);
+      current = [li];
+    }else{
+      current = trial;
+    }
+  });
+  if(current.length) groups.push(current);
+  return groups.map((items, idx) =>
+    build(groups.length > 1 ? `${heading}（${idx+1}/${groups.length}）` : heading, items));
+}
+
+function buildPrintView(chosen){
+  const cardHTMLs = [];
+  const oneCard = (heading, meta, bodyHTML) => cardHTMLs.push(
+    `<div class="pcard"><div class="pcard-head">${esc(heading||'')}</div><div class="pcard-meta">${esc(meta||'')}</div><div class="pcard-body">${bodyHTML}</div></div>`
+  );
+
+  if(chosen.includes('memo')){
+    state.memos.slice().sort((a,b) => b.created-a.created).forEach(m => {
+      oneCard(catName(m.catId), fmt(m.created), '<div class="pcard-text">'+hlHTML(m.text, m.highlights)+'</div>');
+    });
+  }
+  if(chosen.includes('proc')){
+    state.procs.slice().sort((a,b) => b.updated-a.updated).forEach(p => {
+      const liList = p.steps.map(s => '<li>'+hlHTML(s.text, s.highlights)+'</li>');
+      paginateList(p.title, fmt(p.updated), liList, 'ol', 'psteps').forEach(html => cardHTMLs.push(html));
+    });
+  }
+  if(chosen.includes('prod')){
+    state.products.slice().sort((a,b) => a.name.localeCompare(b.name,'ja')).forEach(p => {
+      const liList = p.facts.map(f => '<li>'+hlHTML(f.text, f.highlights)+'</li>');
+      paginateList(p.name, p.maker || '', liList, 'ul', 'pfacts').forEach(html => cardHTMLs.push(html));
+    });
+  }
+  if(chosen.includes('todo')){
+    state.todos.slice().sort((a,b) => b.created-a.created).forEach(t => {
+      let body = '<div class="pcard-text">'+hlHTML(t.text, t.highlights)+'</div>';
+      if(t.note) body += '<div class="pnote">→ '+hlHTML(t.note, t.noteHighlights)+'</div>';
+      oneCard('調べること', (t.done ? '調べ済み・' : '')+fmt(t.created), body);
+    });
+  }
+  if(chosen.includes('eng')){
+    state.english.slice().sort((a,b) => b.created-a.created).forEach(e => {
+      oneCard('英語', fmt(e.created), '<div class="pcard-text">'+hlHTML(e.text, e.highlights)+'</div>');
+    });
+  }
+
+  let html = '';
+  for(let i=0; i<cardHTMLs.length; i+=2){
+    html += '<div class="psheet">' + cardHTMLs.slice(i, i+2).join('') + '</div>';
+  }
+  $('#printArea').innerHTML = html || '<p style="padding:20px">印刷する内容がありません</p>';
+}
+
+/* ---- CSV書き出し（スプレッドシート用） ---- */
+function csvEscape(v){
+  v = (v == null ? '' : String(v));
+  if(/[",\n]/.test(v)) v = '"' + v.replace(/"/g, '""') + '"';
+  return v;
+}
+$('#btnCSV').onclick = () => {
+  const rows = [['タブ','見出し','内容','日付','備考']];
+  state.memos.forEach(m => rows.push(['とりあえず入力', catName(m.catId), m.text, fmt(m.created), '']));
+  state.procs.forEach(p => {
+    if(!p.steps.length) rows.push(['手順書', p.title, '', fmt(p.updated), '']);
+    p.steps.forEach((s,i) => rows.push(['手順書', p.title, `${i+1}. ${s.text}`, fmt(p.updated), '']));
+  });
+  state.products.forEach(p => {
+    if(!p.facts.length) rows.push(['製品知識', p.name, '', fmt(p.created), p.maker || '']);
+    p.facts.forEach(f => rows.push(['製品知識', p.name, f.text, fmt(f.created), p.maker || '']));
+  });
+  state.todos.forEach(t => rows.push(['調べること', t.done ? '調べ済み' : '未', t.text, fmt(t.created), t.note || '']));
+  state.english.forEach(e => rows.push(['英語', '', e.text, fmt(e.created), '']));
+  const csv = '\uFEFF' + rows.map(r => r.map(csvEscape).join(',')).join('\r\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const d = new Date();
+  const name = `仕事メモ_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.csv`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast('CSVを書き出しました');
+};
+
+/* ---- 起動 ---- */
+load();
+render();
+</script>
+</body>
+</html>
