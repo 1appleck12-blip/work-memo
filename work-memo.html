@@ -10,6 +10,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <title>仕事メモ</title>
 <style>
 :root{
@@ -282,6 +283,12 @@ main{padding:14px;max-width:720px;margin:0 auto;}
 </head>
 <body>
 
+<div id="signedOutView" style="max-width:420px;margin:70px auto;padding:0 24px;text-align:center;">
+  <p style="color:var(--muted);font-size:14px;line-height:1.8;">データはGoogleドライブの専用領域に保存されます。まずGoogleアカウントでログインしてください。</p>
+  <button id="btnGoogleLogin" style="background:var(--memo);color:#fff;font-weight:700;padding:12px 26px;border-radius:var(--radius);font-size:15px;">Googleでログイン</button>
+</div>
+
+<div id="appShell" style="display:none;">
 <header>
   <div class="head-row">
     <h1>仕事メモ</h1>
@@ -292,6 +299,7 @@ main{padding:14px;max-width:720px;margin:0 auto;}
       <button class="tool-btn" id="btnHL">🖍 マーカー</button>
       <button class="tool-btn" id="btnDuplexSetup">⚙ 両面設定</button>
       <button class="tool-btn" id="btnPrint">印刷</button>
+      <button class="tool-btn" id="btnLogout">ログアウト</button>
     </div>
   </div>
   <div class="tabs">
@@ -344,8 +352,10 @@ main{padding:14px;max-width:720px;margin:0 auto;}
     </div>
   </div>
 </div>
+</div>
 
 <input type="file" id="fileInput" accept="application/json,.json" style="display:none">
+<div id="printArea"></div>
 <div id="printArea"></div>
 
 <script>
@@ -370,37 +380,101 @@ let tab = 'memo';
 let activeCat = 'all';
 let query = '';
 
-function load(){
+/* ============ Googleドライブ保存 ============
+   ★ a6-work-manualと同じGoogle Cloudプロジェクトのクライアントを使用 */
+const CLIENT_ID = '924820750928-fb9qv6ocvs6ucmcd3bnq97p98o7i3ttl.apps.googleusercontent.com';
+const SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
+const MANIFEST_NAME = 'work-memo-manifest.json';
+let accessToken = null;
+let tokenClient = null;
+let manifestFileId = null;
+
+function normalizeState(d){
+  if(!d || !Array.isArray(d.categories)) return false;
+  state = d;
+  if(!Array.isArray(state.products)) state.products = [];
+  if(!Array.isArray(state.procs)) state.procs = [];
+  if(!Array.isArray(state.todos)) state.todos = [];
+  if(!Array.isArray(state.english)) state.english = [];
+  if(!state.duplexCalib) state.duplexCalib = { shiftTopMm: -1.0 };
+  if(!state._migEnglishTab){
+    const engCat = state.categories.find(c => c.name === '英語');
+    if(engCat){
+      state.memos.filter(m => m.catId === engCat.id).forEach(m => {
+        state.english.push({id:uid(), text:m.text, created:m.created});
+      });
+      state.memos = state.memos.filter(m => m.catId !== engCat.id);
+      state.categories = state.categories.filter(c => c.id !== engCat.id);
+    }
+    state._migEnglishTab = true;
+  }
+  return true;
+}
+
+function loadLocalCacheOnly(){
   try{
     const raw = localStorage.getItem(KEY);
-    if(raw){
-      const d = JSON.parse(raw);
-      if(d && Array.isArray(d.categories)){
-        state = d;
-        if(!Array.isArray(state.products)) state.products = [];
-        if(!Array.isArray(state.procs)) state.procs = [];
-        if(!Array.isArray(state.todos)) state.todos = [];
-        if(!Array.isArray(state.english)) state.english = [];
-        if(!state.duplexCalib) state.duplexCalib = { shiftTopMm: -1.0 };
-        if(!state._migEnglishTab){
-          const engCat = state.categories.find(c => c.name === '英語');
-          if(engCat){
-            state.memos.filter(m => m.catId === engCat.id).forEach(m => {
-              state.english.push({id:uid(), text:m.text, created:m.created});
-            });
-            state.memos = state.memos.filter(m => m.catId !== engCat.id);
-            state.categories = state.categories.filter(c => c.id !== engCat.id);
-          }
-          state._migEnglishTab = true;
-          save();
-        }
-      }
-    }
+    if(raw) normalizeState(JSON.parse(raw));
   }catch(e){ console.error(e); }
 }
-function save(){
+function saveLocalCache(){
   try{ localStorage.setItem(KEY, JSON.stringify(state)); }
-  catch(e){ toast('保存できませんでした'); }
+  catch(e){ /* 端末内保存に失敗しても、Googleドライブ側が本体なので続行 */ }
+}
+
+async function driveFetch(url, opts={}){
+  opts.headers = Object.assign({}, opts.headers, {Authorization:'Bearer '+accessToken});
+  const res = await fetch(url, opts);
+  if(res.status === 401) throw new Error('認証切れ');
+  if(!res.ok) throw new Error('Drive APIエラー: '+res.status);
+  return res;
+}
+async function findManifestFile(){
+  const q = encodeURIComponent(`name='${MANIFEST_NAME}' and 'appDataFolder' in parents and trashed=false`);
+  const res = await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=appDataFolder&fields=files(id,name)`);
+  const data = await res.json();
+  return (data.files && data.files[0]) || null;
+}
+async function createManifestFile(initialData){
+  const metaRes = await driveFetch('https://www.googleapis.com/drive/v3/files', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name:MANIFEST_NAME, parents:['appDataFolder'], mimeType:'application/json'})
+  });
+  const meta = await metaRes.json();
+  await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${meta.id}?uploadType=media`, {
+    method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(initialData)
+  });
+  return meta.id;
+}
+async function loadFromDrive(){
+  const file = await findManifestFile();
+  if(!file){
+    // ドライブにまだ何もなければ、今端末にある内容（少量ならそのまま）をアップロードして初期化する
+    manifestFileId = await createManifestFile(state);
+    return;
+  }
+  manifestFileId = file.id;
+  const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`);
+  const data = await res.json();
+  normalizeState(data);
+}
+
+let saveTimer = null;
+function save(){
+  saveLocalCache();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveToDrive, 800);
+}
+async function saveToDrive(){
+  if(!accessToken || !manifestFileId) return;
+  try{
+    await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${manifestFileId}?uploadType=media`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(state)
+    });
+  }catch(e){
+    console.error(e);
+    toast('クラウド保存に失敗（この端末には保存済みです）');
+  }
 }
 
 /* ============ 表示のユーティリティ ============ */
@@ -1316,8 +1390,50 @@ $('#btnCSV').onclick = () => {
 };
 
 /* ---- 起動 ---- */
-load();
-render();
+loadLocalCacheOnly(); // ログイン完了を待つ間、すぐ表示できるよう端末内の控えを先に読んでおく
+
+window.addEventListener('load', () => {
+  const check = setInterval(() => {
+    if(window.google && google.accounts){ clearInterval(check); initGis(); }
+  }, 100);
+});
+
+function initGis(){
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPES,
+    callback: async (resp) => {
+      if(resp.error){ toast('ログインに失敗しました'); return; }
+      accessToken = resp.access_token;
+      await onSignedIn();
+    }
+  });
+  document.getElementById('btnGoogleLogin').addEventListener('click', () => {
+    tokenClient.requestAccessToken({prompt:'consent'});
+  });
+  document.getElementById('btnLogout').addEventListener('click', signOut);
+}
+
+async function onSignedIn(){
+  document.getElementById('signedOutView').style.display = 'none';
+  document.getElementById('appShell').style.display = '';
+  try{
+    await loadFromDrive();
+    saveLocalCache();
+  }catch(e){
+    console.error(e);
+    toast('クラウドの読み込みに失敗、端末内の控えを表示しています');
+  }
+  render();
+}
+
+function signOut(){
+  if(accessToken){ google.accounts.oauth2.revoke(accessToken, () => {}); }
+  accessToken = null;
+  manifestFileId = null;
+  document.getElementById('appShell').style.display = 'none';
+  document.getElementById('signedOutView').style.display = '';
+}
 </script>
 </body>
 </html>
