@@ -1409,7 +1409,7 @@ function initGis(){
     }
   });
   document.getElementById('btnGoogleLogin').addEventListener('click', () => {
-    tokenClient.requestAccessToken({prompt:'consent'});
+    tokenClient.requestAccessToken();
   });
   document.getElementById('btnLogout').addEventListener('click', signOut);
 }
