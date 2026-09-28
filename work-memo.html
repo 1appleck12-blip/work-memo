@@ -254,11 +254,8 @@ main{padding:14px;max-width:720px;margin:0 auto;}
 .pflow-no{position:absolute;right:5mm;bottom:4mm;font-size:5pt;color:#888;}
 .calib-sheet{width:210mm;height:297mm;position:relative;page-break-after:always;}
 .calib-sheet:last-child{page-break-after:auto;}
-.calib-cross{position:absolute;width:10mm;height:10mm;margin:-5mm 0 0 -5mm;}
-.calib-cross::before,.calib-cross::after{content:'';position:absolute;background:#000;}
-.calib-cross::before{left:50%;top:0;bottom:0;width:0.3mm;transform:translateX(-50%);}
-.calib-cross::after{top:50%;left:0;right:0;height:0.3mm;transform:translateY(-50%);}
-.calib-label{position:absolute;top:50%;left:50%;transform:translate(-50%,12mm);font-size:9pt;}
+.calib-sheet{overflow:hidden;}
+.calib-sheet svg{display:block;}
 
 .psheet{
   width:210mm;min-height:297mm;
@@ -281,7 +278,7 @@ main{padding:14px;max-width:720px;margin:0 auto;}
 .pcard-body li{margin-bottom:1.2mm;}
 .pnote{margin-top:1.5mm;font-size:6pt;color:#333;}
 @media print{
-  header,.composer,.card-acts,.chips,.tool-btn,.toast,.search-wrap,main{display:none !important;}
+  header,.composer,.card-acts,.chips,.tool-btn,.toast,.search-wrap,main,.overlay{display:none !important;}
   body{background:#fff;padding:0;margin:0;}
   #printArea{display:block;}
   *{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;}
@@ -1253,52 +1250,105 @@ $('#btnPrint').onclick = () => {
   };
 };
 
+function calibSVG(kind, ox, oy, confirmMode){
+  // 座標はすべてmm（用紙 210×297）。kind: 'front'=十字のみ / 'back'=目盛り付き
+  const P = [[10,10],[200,10],[10,287],[200,287],[105,148.5]];
+  const F = "font-family=\"'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif\"";
+  const line = (x1,y1,x2,y2,w) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#000" stroke-width="${w}"/>`;
+  const txt = (x,y,size,anchor,s) => `<text x="${x}" y="${y}" font-size="${size}" text-anchor="${anchor}" ${F}>${s}</text>`;
+  let g = '';
+  P.forEach(([cx,cy]) => {
+    if(kind === 'front'){
+      g += line(cx-8,cy,cx+8,cy,0.3) + line(cx,cy-8,cx,cy+8,0.3);
+    }else{
+      g += line(cx-8,cy,cx+8,cy,0.15) + line(cx,cy-8,cx,cy+8,0.15);
+      for(let k=-10; k<=10; k++){
+        if(k === 0) continue;
+        const v = k/2, whole = (k % 2 === 0), h = whole ? 1.2 : 0.6;
+        g += line(cx+v, cy-h, cx+v, cy+h, 0.1);          // 横の目盛り（右がプラス）
+        g += line(cx-h, cy+v, cx+h, cy+v, 0.1);          // 縦の目盛り（下がプラス）
+        if(whole && v % 2 === 0){
+          // 数字が重ならないよう、4つの象限に1組ずつ風車状に置く
+          if(v < 0){
+            g += txt(cx+v, cy-2.6, 1.6, 'middle', v);         // 横・左側 → 上に
+            g += txt(cx+2.6, cy+v+0.55, 1.6, 'start', v);     // 縦・上側 → 右に
+          }else{
+            g += txt(cx+v, cy+3.9, 1.6, 'middle', v);         // 横・右側 → 下に
+            g += txt(cx-2.6, cy+v+0.55, 1.6, 'end', v);       // 縦・下側 → 左に
+          }
+        }
+      }
+    }
+  });
+  if(kind === 'front'){
+    g += txt(105, 18, 3.6, 'middle', '表面（十字のみ）');
+    g += `<rect x="25" y="25" width="105" height="148" fill="none" stroke="#000" stroke-width="0.2" stroke-dasharray="1.5 1"/>`;
+    g += txt(77.5, 92, 3.2, 'middle', 'A6のメモ帳を重ねて、');
+    g += txt(77.5, 97, 3.2, 'middle', 'この枠と同じ大きさなら');
+    g += txt(77.5, 102, 3.2, 'middle', '縮小されていません');
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="297mm" viewBox="0 0 210 297">${g}</svg>`;
+  }
+  const lines = confirmMode
+    ? ['裏面（補正を反映した確認用）', 'この面を上にして光にかざし、', '透けて見える表の十字が', '中央の目盛りの「0」に重なっていれば合っています']
+    : ['裏面（目盛り付き）', 'この面を上にして、文字が読める向きで光にかざし、', '透けて見える表の十字の中心が', '中央の目盛りのどこに来るかを読む', '右がプラス、下がプラス（0.25mm刻み）'];
+  lines.forEach((t, i) => { g += txt(105, 40 + i*6, i === 0 ? 3.8 : 3.4, 'middle', t); });
+  const tr = confirmMode ? ` transform="translate(${ox} ${oy})"` : '';
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="297mm" viewBox="0 0 210 297"><g${tr}>${g}</g></svg>`;
+}
+
+function printCalibSheets(confirmMode, ox, oy){
+  $('#printArea').innerHTML =
+    '<div class="calib-sheet">' + calibSVG('front', 0, 0, false) + '</div>' +
+    '<div class="calib-sheet">' + calibSVG('back', ox || 0, oy || 0, !!confirmMode) + '</div>';
+  setTimeout(() => window.print(), 60);
+}
+
 $('#btnDuplexSetup').onclick = () => {
   const c = state.duplexCalib || {};
-  const ox = c.offsetXmm || 0, oy = c.offsetYmm || 0;
+  const snap = v => Math.max(-5, Math.min(5, Math.round((v || 0) * 4) / 4));
+  const curX = snap(c.offsetXmm), curY = snap(c.offsetYmm);
+  const opts = sel => {
+    let h = '';
+    for(let k = -20; k <= 20; k++){
+      const v = k / 4;
+      const lab = v === 0 ? '0（ズレなし）' : (v > 0 ? '+' : '') + v.toFixed(2);
+      h += `<option value="${v}" ${v === sel ? 'selected' : ''}>${lab}</option>`;
+    }
+    return h;
+  };
+  const selStyle = 'width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg);margin-bottom:10px;font-size:16px';
   const ov = modal(`<h2>両面印刷のズレ補正</h2>
-    <p style="font-size:13px;color:var(--muted);margin:0 0 10px">① 下のボタンでキャリブレーション用紙（表・裏の2ページ）をプリンターの自動両面で印刷 → ② 表と裏の十字マークを光にかざして重ね、ズレを定規で測る → ③ ズレの向きと大きさを入れて保存。</p>
-    <div class="modal-acts" style="justify-content:flex-start;margin:0 0 12px">
+    <ol style="font-size:13px;color:var(--muted);margin:0 0 10px;padding-left:18px;line-height:1.6">
+      <li>「キャリブレーション用紙を印刷」を、プリンターの自動両面で印刷します（両面の設定は本番と同じにしてください）。</li>
+      <li>できた紙の<b>目盛りがある面</b>を上にして、文字が読める向きで光にかざします。</li>
+      <li>透けて見える表の十字の中心が、<b>中央の十字の目盛りのどこにあるか</b>を読みます。右にあればプラス、下にあればプラス。</li>
+      <li>読んだ数字を下で選んで、「この値で確認用紙を印刷」で、十字が0に重なるか確かめてから保存します。</li>
+    </ol>
+    <div class="modal-acts" style="justify-content:flex-start;flex-wrap:wrap;gap:8px;margin:0 0 12px">
       <button class="btn-solid proc" data-calib>キャリブレーション用紙を印刷</button>
     </div>
-    <div style="font-weight:700;margin:4px 0">左右のズレ</div>
-    <input id="calX" type="number" step="0.1" min="0" value="${Math.abs(ox).toFixed(1)}" placeholder="ズレの大きさ (mm)">
-    <div style="display:flex;gap:16px;margin:6px 0 10px;flex-wrap:wrap">
-      <label><input type="radio" name="dirX" value="right" ${ox<0?'checked':''}> 裏が右にずれた（左に補正）</label>
-      <label><input type="radio" name="dirX" value="left" ${ox>0?'checked':''}> 裏が左にずれた（右に補正）</label>
-    </div>
-    <div style="font-weight:700;margin:4px 0">上下のズレ</div>
-    <input id="calY" type="number" step="0.1" min="0" value="${Math.abs(oy).toFixed(1)}" placeholder="ズレの大きさ (mm)">
-    <div style="display:flex;gap:16px;margin:6px 0 10px;flex-wrap:wrap">
-      <label><input type="radio" name="dirY" value="down" ${oy<0?'checked':''}> 裏が下にずれた（上に補正）</label>
-      <label><input type="radio" name="dirY" value="up" ${oy>0?'checked':''}> 裏が上にずれた（下に補正）</label>
+    <div style="font-weight:700;margin:4px 0">左右（右がプラス・左がマイナス）</div>
+    <select id="calX" style="${selStyle}">${opts(curX)}</select>
+    <div style="font-weight:700;margin:4px 0">上下（下がプラス・上がマイナス）</div>
+    <select id="calY" style="${selStyle}">${opts(curY)}</select>
+    <div class="modal-acts" style="justify-content:flex-start;flex-wrap:wrap;gap:8px;margin:0 0 12px">
+      <button class="btn-solid prod" data-confirm>この値で確認用紙を印刷</button>
     </div>
     <div class="modal-acts">
       <button class="btn-ghost" data-x>やめる</button>
       <button class="btn-solid" data-ok>保存</button>
     </div>`);
+  const box = ov.querySelector('.modal');
+  box.style.maxHeight = '90vh'; box.style.overflowY = 'auto';
+  const val = id => parseFloat(ov.querySelector(id).value) || 0;
   ov.querySelector('[data-x]').onclick = () => ov.remove();
-  ov.querySelector('[data-calib]').onclick = () => { ov.remove(); printCalibSheets(); };
+  ov.querySelector('[data-calib]').onclick = () => printCalibSheets(false, 0, 0);
+  ov.querySelector('[data-confirm]').onclick = () => printCalibSheets(true, val('#calX'), val('#calY'));
   ov.querySelector('[data-ok]').onclick = () => {
-    const mx = parseFloat(ov.querySelector('#calX').value) || 0;
-    const my = parseFloat(ov.querySelector('#calY').value) || 0;
-    const dx = (ov.querySelector('input[name="dirX"]:checked') || {}).value;
-    const dy = (ov.querySelector('input[name="dirY"]:checked') || {}).value;
-    const offsetXmm = dx === 'right' ? -mx : (dx === 'left' ? mx : 0);
-    const offsetYmm = dy === 'down' ? -my : (dy === 'up' ? my : 0);
-    state.duplexCalib = Object.assign({}, state.duplexCalib || {}, { offsetXmm, offsetYmm });
+    state.duplexCalib = Object.assign({}, state.duplexCalib || {}, { offsetXmm: val('#calX'), offsetYmm: val('#calY') });
     save(); ov.remove(); toast('保存しました');
   };
 };
-
-function printCalibSheets(){
-  const crossPos = ['top:10mm;left:10mm','top:10mm;right:10mm','bottom:10mm;left:10mm','bottom:10mm;right:10mm','top:50%;left:50%'];
-  const mk = label => '<div class="calib-sheet">' +
-    crossPos.map(p => `<div class="calib-cross" style="${p}"></div>`).join('') +
-    `<div class="calib-label">${label}</div></div>`;
-  $('#printArea').innerHTML = mk('表（1枚目の表面）') + mk('裏（1枚目の裏面）');
-  setTimeout(() => window.print(), 60);
-}
 
 let _measureHost = null;
 function getMeasureHost(){
