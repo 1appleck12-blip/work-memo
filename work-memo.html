@@ -690,6 +690,7 @@ function renderMemo(){
       <div class="card-acts">
         <button data-edit="${m.id}">直す</button>
         <button data-move="${m.id}">ページを変える</button>
+        <button data-mv="memo:${m.id}">他のタブへ移す</button>
         <button data-pr="memo:${m.id}">この項目だけ印刷</button>
         <button class="del" data-del="${m.id}">消す</button>
       </div>
@@ -715,6 +716,7 @@ function renderProc(){
       <ol class="steps">${p.steps.map(s => '<li data-hlkey="procstep:'+p.id+':'+s.id+'">'+hlHTML(s.text, s.highlights)+'</li>').join('')}</ol>
       <div class="card-acts">
         <button data-pedit="${p.id}">手順を直す</button>
+        <button data-mv="proc:${p.id}">他のタブへ移す</button>
         <button data-pr="proc:${p.id}">この項目だけ印刷</button>
         <button class="del" data-pdel="${p.id}">消す</button>
       </div>
@@ -748,6 +750,7 @@ function renderProd(){
       <div class="card-acts">
         <button data-fadd="${p.id}">覚えたことを足す</button>
         <button data-fedit="${p.id}">中身を直す</button>
+        <button data-mv="prod:${p.id}">他のタブへ移す</button>
         <button data-pr="prod:${p.id}">この項目だけ印刷</button>
         <button class="del" data-pkdel="${p.id}">消す</button>
       </div>
@@ -778,6 +781,7 @@ function renderTodo(){
       <div class="todo-acts">
         <button data-note="${t.id}">${t.note ? '分かったことを直す' : '分かったことを書く'}</button>
         <button data-tedit="${t.id}">直す</button>
+        <button data-mv="todo:${t.id}">他のタブへ移す</button>
         <button data-pr="todo:${t.id}">この項目だけ印刷</button>
         <button class="del" data-tdel="${t.id}">消す</button>
       </div>
@@ -798,6 +802,7 @@ function renderEnglish(){
       <div class="card-body" data-hlkey="eng:${e.id}">${hlHTML(e.text, e.highlights)}</div>
       <div class="card-acts">
         <button data-eedit="${e.id}">直す</button>
+        <button data-mv="eng:${e.id}">他のタブへ移す</button>
         <button data-pr="eng:${e.id}">この項目だけ印刷</button>
         <button class="del" data-edel="${e.id}">消す</button>
       </div>
@@ -1844,6 +1849,102 @@ function printItemsLegacy(sheets, total){
   sheets.forEach(sh => area.appendChild(sheetDOM(sh, total, true)));
   setTimeout(() => window.print(), 60);
 }
+
+/* ---- 他のタブへ移す ---- */
+const MOVE_TAB_LABEL = {memo:'とりあえず入力', proc:'手順書', prod:'製品知識', todo:'調べること', eng:'英語'};
+function extractItemForMove(type, id){
+  if(type === 'memo'){
+    const m = state.memos.find(x => x.id === id);
+    return {heading: null, lines: [{text: m.text, ranges: m.highlights || []}]};
+  }
+  if(type === 'proc'){
+    const p = state.procs.find(x => x.id === id);
+    return {heading: p.title, lines: p.steps.filter(s => (s.text||'').trim()).map(s => ({text: s.text, ranges: s.highlights || []}))};
+  }
+  if(type === 'prod'){
+    const p = state.products.find(x => x.id === id);
+    return {heading: p.name, lines: p.facts.filter(f => (f.text||'').trim()).map(f => ({text: f.text, ranges: f.highlights || []}))};
+  }
+  if(type === 'todo'){
+    const t = state.todos.find(x => x.id === id);
+    const lines = [{text: t.text || '', ranges: t.highlights || []}];
+    if((t.note || '').trim()) lines.push({text: t.note, ranges: t.noteHighlights || []});
+    return {heading: null, lines};
+  }
+  if(type === 'eng'){
+    const e = state.english.find(x => x.id === id);
+    return {heading: null, lines: [{text: e.text, ranges: e.highlights || []}]};
+  }
+}
+function deleteItemAfterMove(type, id){
+  if(type === 'memo') state.memos = state.memos.filter(x => x.id !== id);
+  else if(type === 'proc') state.procs = state.procs.filter(x => x.id !== id);
+  else if(type === 'prod') state.products = state.products.filter(x => x.id !== id);
+  else if(type === 'todo') state.todos = state.todos.filter(x => x.id !== id);
+  else if(type === 'eng') state.english = state.english.filter(x => x.id !== id);
+}
+function createFromExtract(destType, ex){
+  const now = Date.now();
+  if(destType === 'memo'){
+    let text = '', ranges = [], off = 0;
+    if(ex.heading){ text += ex.heading + '\n'; off = text.length; }
+    ex.lines.forEach((l, i) => {
+      if(i > 0) text += '\n', off = text.length;
+      (l.ranges || []).forEach(([a,b]) => ranges.push([a+off, b+off]));
+      text += l.text;
+    });
+    const catId = (activeCat !== 'all' && tab === 'memo') ? activeCat : (state.categories[0] && state.categories[0].id) || null;
+    state.memos.push({id: uid(), text, highlights: ranges, catId, created: now});
+    return;
+  }
+  const hasHeading = !!ex.heading;
+  const bodyLines = hasHeading ? ex.lines : ex.lines.slice(1);
+  const firstRaw = ex.lines[0] ? ex.lines[0].text : '';
+  const title = ex.heading || firstRaw.replace(/\n/g, ' ').slice(0, 24) || '無題';
+  if(destType === 'proc'){
+    let steps = bodyLines.map(l => ({id: uid(), text: l.text, highlights: l.ranges || []}));
+    if(!steps.length && ex.lines[0]) steps = [{id: uid(), text: ex.lines[0].text, highlights: ex.lines[0].ranges || []}];
+    state.procs.push({id: uid(), title, steps, updated: now});
+  }else if(destType === 'prod'){
+    let facts = bodyLines.map(l => ({id: uid(), text: l.text, highlights: l.ranges || [], created: now}));
+    if(!facts.length && ex.lines[0]) facts = [{id: uid(), text: ex.lines[0].text, highlights: ex.lines[0].ranges || [], created: now}];
+    state.products.push({id: uid(), name: title, maker: '', facts, created: now});
+  }else if(destType === 'todo'){
+    const first = ex.lines[0] || {text: '', ranges: []};
+    const headPrefix = ex.heading ? ex.heading + ' ' : '';
+    const text = headPrefix + first.text;
+    const noteLine = ex.lines[1];
+    const note = ex.lines.slice(1).map(l => l.text).join('\n');
+    const shiftedFirstRanges = (first.ranges || []).map(([a,b]) => [a + headPrefix.length, b + headPrefix.length]);
+    state.todos.push({id: uid(), text, note, highlights: shiftedFirstRanges, noteHighlights: (ex.lines.length === 2 && noteLine) ? (noteLine.ranges || []) : [], done: false, created: now});
+  }else if(destType === 'eng'){
+    let text = '', ranges = [], off = 0;
+    if(ex.heading){ text += ex.heading + '\n'; off = text.length; }
+    ex.lines.forEach((l, i) => {
+      if(i > 0) text += '\n', off = text.length;
+      (l.ranges || []).forEach(([a,b]) => ranges.push([a+off, b+off]));
+      text += l.text;
+    });
+    state.english.push({id: uid(), text, highlights: ranges, created: now});
+  }
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('button[data-mv]');
+  if(!b) return;
+  const [type, id] = b.dataset.mv.split(':');
+  const ex = extractItemForMove(type, id);
+  const dests = Object.keys(MOVE_TAB_LABEL).filter(k => k !== type);
+  const opts = dests.map(k => `<button class="chip" data-to="${k}" style="margin:0 6px 6px 0">${esc(MOVE_TAB_LABEL[k])}</button>`).join('');
+  const ov = modal(`<h2>どのタブへ移しますか</h2><div>${opts}</div>
+    <div class="modal-acts"><button class="btn-ghost" data-x>やめる</button></div>`);
+  ov.querySelector('[data-x]').onclick = () => ov.remove();
+  ov.querySelectorAll('[data-to]').forEach(x => x.onclick = () => {
+    createFromExtract(x.dataset.to, ex);
+    deleteItemAfterMove(type, id);
+    save(); ov.remove(); render();
+    toast(MOVE_TAB_LABEL[x.dataset.to] + 'へ移しました');
+  });
+});
 
 /* ---- CSV書き出し（スプレッドシート用） ---- */
 function csvEscape(v){
