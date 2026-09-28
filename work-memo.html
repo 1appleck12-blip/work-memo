@@ -109,7 +109,7 @@ main{padding:14px;max-width:720px;margin:0 auto;}
   padding:1px 6px;font-size:11px;color:var(--muted);
 }
 .card-body{white-space:pre-wrap;word-break:break-word;}
-.card-acts{display:flex;gap:14px;margin-top:9px;}
+.card-acts{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:9px;}
 .card-acts button{font-size:12.5px;color:var(--muted);}
 .card-acts .del{color:var(--danger);}
 
@@ -171,7 +171,7 @@ main{padding:14px;max-width:720px;margin:0 auto;}
   margin:8px 0 0 30px;padding:8px 10px;background:var(--bg);
   border-radius:6px;font-size:13.5px;white-space:pre-wrap;word-break:break-word;
 }
-.todo-acts{display:flex;gap:14px;margin-top:8px;margin-left:30px;}
+.todo-acts{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px;margin-left:30px;}
 .todo-acts button{font-size:12.5px;color:var(--muted);}
 .todo-acts .del{color:var(--danger);}
 
@@ -248,6 +248,18 @@ main{padding:14px;max-width:720px;margin:0 auto;}
 }
 
 #printArea{display:none;}
+/* ---- 連続流し込み印刷 ---- */
+.pcard.flow{padding:13mm;height:148mm;min-height:0;overflow:hidden;position:relative;}
+.pflow-body{font-family:-apple-system,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;font-size:6pt;line-height:1.55;white-space:pre-wrap;word-break:break-word;color:#000;}
+.pflow-no{position:absolute;right:5mm;bottom:4mm;font-size:5pt;color:#888;}
+.calib-sheet{width:210mm;height:297mm;position:relative;page-break-after:always;}
+.calib-sheet:last-child{page-break-after:auto;}
+.calib-cross{position:absolute;width:10mm;height:10mm;margin:-5mm 0 0 -5mm;}
+.calib-cross::before,.calib-cross::after{content:'';position:absolute;background:#000;}
+.calib-cross::before{left:50%;top:0;bottom:0;width:0.3mm;transform:translateX(-50%);}
+.calib-cross::after{top:50%;left:0;right:0;height:0.3mm;transform:translateY(-50%);}
+.calib-label{position:absolute;top:50%;left:50%;transform:translate(-50%,12mm);font-size:9pt;}
+
 .psheet{
   width:210mm;min-height:297mm;
   display:flex;flex-direction:column;align-items:center;
@@ -397,6 +409,7 @@ function normalizeState(d){
   if(!Array.isArray(state.todos)) state.todos = [];
   if(!Array.isArray(state.english)) state.english = [];
   if(!state.duplexCalib) state.duplexCalib = { shiftTopMm: -1.0 };
+  if(typeof state.autoDuplex !== 'boolean') state.autoDuplex = false;
   if(!state._migEnglishTab){
     const engCat = state.categories.find(c => c.name === '英語');
     if(engCat){
@@ -669,6 +682,7 @@ function renderMemo(){
       <div class="card-acts">
         <button data-edit="${m.id}">直す</button>
         <button data-move="${m.id}">ページを変える</button>
+        <button data-pr="memo:${m.id}">この項目だけ印刷</button>
         <button class="del" data-del="${m.id}">消す</button>
       </div>
     </article>`).join('');
@@ -693,6 +707,7 @@ function renderProc(){
       <ol class="steps">${p.steps.map(s => '<li data-hlkey="procstep:'+p.id+':'+s.id+'">'+hlHTML(s.text, s.highlights)+'</li>').join('')}</ol>
       <div class="card-acts">
         <button data-pedit="${p.id}">手順を直す</button>
+        <button data-pr="proc:${p.id}">この項目だけ印刷</button>
         <button class="del" data-pdel="${p.id}">消す</button>
       </div>
     </article>`).join('');
@@ -725,6 +740,7 @@ function renderProd(){
       <div class="card-acts">
         <button data-fadd="${p.id}">覚えたことを足す</button>
         <button data-fedit="${p.id}">中身を直す</button>
+        <button data-pr="prod:${p.id}">この項目だけ印刷</button>
         <button class="del" data-pkdel="${p.id}">消す</button>
       </div>
     </article>`;
@@ -754,6 +770,7 @@ function renderTodo(){
       <div class="todo-acts">
         <button data-note="${t.id}">${t.note ? '分かったことを直す' : '分かったことを書く'}</button>
         <button data-tedit="${t.id}">直す</button>
+        <button data-pr="todo:${t.id}">この項目だけ印刷</button>
         <button class="del" data-tdel="${t.id}">消す</button>
       </div>
     </article>`).join('');
@@ -773,6 +790,7 @@ function renderEnglish(){
       <div class="card-body" data-hlkey="eng:${e.id}">${hlHTML(e.text, e.highlights)}</div>
       <div class="card-acts">
         <button data-eedit="${e.id}">直す</button>
+        <button data-pr="eng:${e.id}">この項目だけ印刷</button>
         <button class="del" data-edel="${e.id}">消す</button>
       </div>
     </article>`).join('');
@@ -1137,71 +1155,150 @@ $('#fileInput').onchange = e => {
   r.readAsText(f);
 };
 
-$('#btnPrint').onclick = () => {
-  const tabDefs = [
-    {key:'memo', label:'とりあえず入力', def:false},
-    {key:'proc', label:'手順書', def:true},
-    {key:'prod', label:'製品知識', def:true},
-    {key:'todo', label:'調べること', def:true},
-    {key:'eng', label:'英語', def:false}
+function printCatalog(){
+  const clip = (t, n) => { t = (t || '').replace(/\s+/g, ' ').trim(); return t.length > (n||22) ? t.slice(0, n||22) + '…' : t; };
+  return [
+    {key:'memo', label:'とりあえず入力', def:false,
+      items: state.memos.slice().sort((a,b) => b.created-a.created).map(m => ({id:'memo:'+m.id, label:clip(m.text)}))},
+    {key:'proc', label:'手順書', def:true,
+      items: state.procs.slice().sort((a,b) => b.updated-a.updated).map(p => ({id:'proc:'+p.id, label:clip(p.title)}))},
+    {key:'prod', label:'製品知識', def:true,
+      items: state.products.slice().sort((a,b) => a.name.localeCompare(b.name,'ja')).map(p => ({id:'prod:'+p.id, label:clip(p.name)}))},
+    {key:'todo', label:'調べること', def:true,
+      items: state.todos.slice().sort((a,b) => b.created-a.created).map(t => ({id:'todo:'+t.id, label:(t.done?'✓ ':'')+clip(t.text)}))},
+    {key:'eng', label:'英語', def:false,
+      items: state.english.slice().sort((a,b) => b.created-a.created).map(x => ({id:'eng:'+x.id, label:clip(x.text)}))}
   ];
-  const opts = tabDefs.map(t => `
-    <label style="display:flex;align-items:center;gap:8px;padding:9px 0;border-top:1px solid var(--line)">
-      <input type="checkbox" class="pchk" value="${t.key}" ${t.def?'checked':''} style="width:18px;height:18px">
-      ${esc(t.label)}
-    </label>`).join('');
-  const ov = modal(`<h2>印刷するタブを選ぶ</h2>
-    <div>${opts}</div>
+}
+
+function printItems(idSet){
+  const all = buildFlowText(idSet);
+  if(!all.text.trim()){ toast('印刷する内容がありません'); return; }
+  const cards = flowPaginate(all);
+  $('#printArea').innerHTML = flowSheetsHTML(cards, !!state.autoDuplex);
+  setTimeout(() => window.print(), 60);
+}
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('button[data-pr]');
+  if(!b) return;
+  toast('この項目だけ印刷します（自動両面：' + (state.autoDuplex ? 'オン' : 'オフ') + '）');
+  printItems(new Set([b.dataset.pr]));
+});
+
+$('#btnPrint').onclick = () => {
+  const cat = printCatalog();
+  const chkStyle = 'width:18px;height:18px;margin:0;padding:0;flex:none';
+  const tabsHTML = cat.map(t => `
+    <div class="ptab" data-tab="${t.key}" style="border-top:1px solid var(--line);padding:8px 0">
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="checkbox" class="ptabchk" style="${chkStyle}" ${t.items.length ? '' : 'disabled'}>
+        <span style="flex:1">${esc(t.label)} <span class="pcount" style="color:var(--muted);font-size:12px"></span></span>
+        ${t.items.length ? '<button type="button" class="btn-ghost ptoggle" style="padding:4px 10px;font-size:12px;border-radius:999px">項目を選ぶ ▼</button>' : ''}
+      </div>
+      <div class="pitems" style="display:none;margin:6px 0 0 26px">
+        ${t.items.map(it => `
+        <label style="display:flex;align-items:flex-start;gap:8px;padding:5px 0">
+          <input type="checkbox" class="pitem" value="${it.id}" style="${chkStyle}" ${t.def ? 'checked' : ''}>
+          <span style="font-size:13px;line-height:1.4">${esc(it.label) || '（空）'}</span>
+        </label>`).join('')}
+      </div>
+    </div>`).join('');
+  const ov = modal(`<h2>印刷する項目を選ぶ</h2>
+    <p style="font-size:12px;color:var(--muted);margin:0 0 6px">見出しなし・項目の間は1行あけて本文を続けて流し込み、あふれたら自動で次のカードに続きます。「項目を選ぶ」で1つずつ選べます。</p>
+    <div>${tabsHTML}</div>
     <label style="display:flex;align-items:center;gap:8px;padding:11px 0;border-top:1px solid var(--line);margin-top:4px">
-      <input type="checkbox" id="duplexChk" style="width:18px;height:18px">
-      両面で印刷する（同じ項目の続きページだけ裏表にします）
+      <input type="checkbox" id="autoDuplexChk" ${state.autoDuplex?'checked':''} style="${chkStyle}">
+      プリンターの自動両面印刷を使う（裏面にズレ補正をかけます）
     </label>
     <div class="modal-acts">
       <button class="btn-ghost" data-x>やめる</button>
       <button class="btn-solid" data-ok>印刷する</button>
     </div>`);
+  const box = ov.querySelector('.modal');
+  box.style.maxHeight = '88vh'; box.style.overflowY = 'auto';
+
+  const refresh = tabEl => {
+    const items = Array.from(tabEl.querySelectorAll('.pitem'));
+    const on = items.filter(i => i.checked).length;
+    const tc = tabEl.querySelector('.ptabchk');
+    tc.checked = items.length > 0 && on === items.length;
+    tc.indeterminate = on > 0 && on < items.length;
+    tabEl.querySelector('.pcount').textContent = items.length ? `（${on}/${items.length}）` : '（なし）';
+  };
+  ov.querySelectorAll('.ptab').forEach(tabEl => {
+    refresh(tabEl);
+    tabEl.querySelector('.ptabchk').onchange = ev => {
+      tabEl.querySelectorAll('.pitem').forEach(i => i.checked = ev.target.checked);
+      refresh(tabEl);
+    };
+    tabEl.querySelectorAll('.pitem').forEach(i => i.onchange = () => refresh(tabEl));
+    const tg = tabEl.querySelector('.ptoggle');
+    if(tg) tg.onclick = () => {
+      const pi = tabEl.querySelector('.pitems');
+      const open = pi.style.display === 'none';
+      pi.style.display = open ? '' : 'none';
+      tg.textContent = open ? '項目を閉じる ▲' : '項目を選ぶ ▼';
+    };
+  });
+
   ov.querySelector('[data-x]').onclick = () => ov.remove();
   ov.querySelector('[data-ok]').onclick = () => {
-    const chosen = Array.from(ov.querySelectorAll('.pchk:checked')).map(c => c.value);
-    const duplex = ov.querySelector('#duplexChk').checked;
+    const ids = new Set(Array.from(ov.querySelectorAll('.pitem:checked')).map(c => c.value));
+    const autoDuplex = ov.querySelector('#autoDuplexChk').checked;
     ov.remove();
-    if(!chosen.length){ toast('タブを1つ以上選んでください'); return; }
-    const cardObjs = buildCardList(chosen);
-    if(!cardObjs.length){ toast('印刷する内容がありません'); return; }
-    if(!duplex){
-      $('#printArea').innerHTML = renderSheets(cardObjs.map(c => c.html));
-      setTimeout(() => window.print(), 60);
-      return;
-    }
-    openDuplexPrintPanel(cardObjs);
+    if(!ids.size){ toast('項目を1つ以上選んでください'); return; }
+    if(state.autoDuplex !== autoDuplex){ state.autoDuplex = autoDuplex; save(); }
+    printItems(ids);
   };
 };
 
 $('#btnDuplexSetup').onclick = () => {
-  const cur = state.duplexCalib || {shiftTopMm:-1.0};
-  const mag = Math.abs(cur.shiftTopMm).toFixed(1);
-  const dir = cur.shiftTopMm < 0 ? 'left' : 'right';
+  const c = state.duplexCalib || {};
+  const ox = c.offsetXmm || 0, oy = c.offsetYmm || 0;
   const ov = modal(`<h2>両面印刷のズレ補正</h2>
-    <p style="font-size:13px;color:var(--muted);margin:0 0 10px">キャリブレーション用紙で測った、上端でのズレ量を入れてください。下端は0mmとして、間は比例で補正します。</p>
-    <input id="calMag" type="number" step="0.1" min="0" value="${mag}" placeholder="ズレの大きさ (mm)">
-    <div style="display:flex;gap:16px;margin:6px 0 10px">
-      <label><input type="radio" name="calDir" value="left" ${dir==='left'?'checked':''}> 裏が右にずれた（左に補正）</label>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 10px">① 下のボタンでキャリブレーション用紙（表・裏の2ページ）をプリンターの自動両面で印刷 → ② 表と裏の十字マークを光にかざして重ね、ズレを定規で測る → ③ ズレの向きと大きさを入れて保存。</p>
+    <div class="modal-acts" style="justify-content:flex-start;margin:0 0 12px">
+      <button class="btn-solid proc" data-calib>キャリブレーション用紙を印刷</button>
     </div>
-    <div style="display:flex;gap:16px;margin:0 0 10px">
-      <label><input type="radio" name="calDir" value="right" ${dir==='right'?'checked':''}> 裏が左にずれた（右に補正）</label>
+    <div style="font-weight:700;margin:4px 0">左右のズレ</div>
+    <input id="calX" type="number" step="0.1" min="0" value="${Math.abs(ox).toFixed(1)}" placeholder="ズレの大きさ (mm)">
+    <div style="display:flex;gap:16px;margin:6px 0 10px;flex-wrap:wrap">
+      <label><input type="radio" name="dirX" value="right" ${ox<0?'checked':''}> 裏が右にずれた（左に補正）</label>
+      <label><input type="radio" name="dirX" value="left" ${ox>0?'checked':''}> 裏が左にずれた（右に補正）</label>
+    </div>
+    <div style="font-weight:700;margin:4px 0">上下のズレ</div>
+    <input id="calY" type="number" step="0.1" min="0" value="${Math.abs(oy).toFixed(1)}" placeholder="ズレの大きさ (mm)">
+    <div style="display:flex;gap:16px;margin:6px 0 10px;flex-wrap:wrap">
+      <label><input type="radio" name="dirY" value="down" ${oy<0?'checked':''}> 裏が下にずれた（上に補正）</label>
+      <label><input type="radio" name="dirY" value="up" ${oy>0?'checked':''}> 裏が上にずれた（下に補正）</label>
     </div>
     <div class="modal-acts">
       <button class="btn-ghost" data-x>やめる</button>
       <button class="btn-solid" data-ok>保存</button>
     </div>`);
   ov.querySelector('[data-x]').onclick = () => ov.remove();
+  ov.querySelector('[data-calib]').onclick = () => { ov.remove(); printCalibSheets(); };
   ov.querySelector('[data-ok]').onclick = () => {
-    const m = parseFloat(ov.querySelector('#calMag').value) || 0;
-    const d = ov.querySelector('input[name="calDir"]:checked').value;
-    state.duplexCalib = { shiftTopMm: d === 'left' ? -m : m };
+    const mx = parseFloat(ov.querySelector('#calX').value) || 0;
+    const my = parseFloat(ov.querySelector('#calY').value) || 0;
+    const dx = (ov.querySelector('input[name="dirX"]:checked') || {}).value;
+    const dy = (ov.querySelector('input[name="dirY"]:checked') || {}).value;
+    const offsetXmm = dx === 'right' ? -mx : (dx === 'left' ? mx : 0);
+    const offsetYmm = dy === 'down' ? -my : (dy === 'up' ? my : 0);
+    state.duplexCalib = Object.assign({}, state.duplexCalib || {}, { offsetXmm, offsetYmm });
     save(); ov.remove(); toast('保存しました');
   };
 };
+
+function printCalibSheets(){
+  const crossPos = ['top:10mm;left:10mm','top:10mm;right:10mm','bottom:10mm;left:10mm','bottom:10mm;right:10mm','top:50%;left:50%'];
+  const mk = label => '<div class="calib-sheet">' +
+    crossPos.map(p => `<div class="calib-cross" style="${p}"></div>`).join('') +
+    `<div class="calib-label">${label}</div></div>`;
+  $('#printArea').innerHTML = mk('表（1枚目の表面）') + mk('裏（1枚目の裏面）');
+  setTimeout(() => window.print(), 60);
+}
 
 let _measureHost = null;
 function getMeasureHost(){
@@ -1286,6 +1383,109 @@ function buildCardList(chosen){
     });
   }
   return cards;
+}
+
+/* ---- 連続流し込み：見出し・区切りなしで本文を詰め、あふれたら次のカードへ ---- */
+const FLOW_W_MM = 93;    // カード内側の幅（119mm - 左右13mm×2）
+const FLOW_H_MM = 120;   // カード内側の高さ（148mm - 上下13mm×2 = 122mm から2mm安全側）
+let _flowHost = null;
+function getFlowHost(){
+  if(_flowHost) return _flowHost;
+  const w = document.createElement('div');
+  w.style.cssText = 'position:fixed;left:-9999px;top:0;visibility:hidden;width:' + FLOW_W_MM + 'mm;';
+  w.innerHTML = '<div class="pflow-body"></div>';
+  document.body.appendChild(w);
+  _flowHost = w.firstChild;
+  return _flowHost;
+}
+function clipRanges(ranges, s, e){
+  return ranges.map(([a,b]) => [Math.max(a,s)-s, Math.min(b,e)-s]).filter(r => r[1] > r[0]);
+}
+function flowFits(text, ranges, s, e){
+  const host = getFlowHost();
+  host.innerHTML = hlHTML(text.slice(s, e), clipRanges(ranges, s, e));
+  return host.getBoundingClientRect().height <= FLOW_H_MM * MM_TO_PX;
+}
+function joinParts(parts, sep){
+  let text = '', ranges = [];
+  parts.forEach((p, i) => {
+    if(i > 0) text += sep;
+    const off = text.length;
+    text += p.text;
+    (p.ranges || []).forEach(([a,b]) => ranges.push([a+off, b+off]));
+  });
+  return {text, ranges};
+}
+function withPrefix(prefix, text, ranges){
+  return {text: prefix + (text || ''), ranges: (ranges || []).map(([a,b]) => [a+prefix.length, b+prefix.length])};
+}
+function buildFlowText(sel){
+  const items = [];
+  const add = (text, ranges) => { if((text || '').trim()) items.push({text, ranges: ranges || []}); };
+  state.memos.slice().sort((a,b) => b.created-a.created).forEach(m => {
+    if(sel.has('memo:'+m.id)) add(m.text, m.highlights);
+  });
+  state.procs.slice().sort((a,b) => b.updated-a.updated).forEach(p => {
+    if(!sel.has('proc:'+p.id)) return;
+    const lines = p.steps.filter(s => (s.text||'').trim()).map((s,i) => withPrefix((i+1)+'. ', s.text, s.highlights));
+    if(lines.length){ const j = joinParts(lines, '\n'); add(j.text, j.ranges); }
+  });
+  state.products.slice().sort((a,b) => a.name.localeCompare(b.name,'ja')).forEach(p => {
+    if(!sel.has('prod:'+p.id)) return;
+    const lines = p.facts.filter(f => (f.text||'').trim()).map(f => withPrefix('・', f.text, f.highlights));
+    if(lines.length){ const j = joinParts(lines, '\n'); add(j.text, j.ranges); }
+  });
+  state.todos.slice().sort((a,b) => b.created-a.created).forEach(t => {
+    if(!sel.has('todo:'+t.id)) return;
+    const parts = [{text: t.text || '', ranges: t.highlights || []}];
+    if((t.note || '').trim()) parts.push(withPrefix('→ ', t.note, t.noteHighlights));
+    const j = joinParts(parts, '\n'); add(j.text, j.ranges);
+  });
+  state.english.slice().sort((a,b) => b.created-a.created).forEach(x => {
+    if(sel.has('eng:'+x.id)) add(x.text, x.highlights);
+  });
+  return joinParts(items, '\n\n');   // 項目の間は常に1行あける
+}
+function flowPaginate(all){
+  const text = all.text, ranges = all.ranges, n = text.length;
+  const cards = [];
+  let s = 0;
+  while(s < n){
+    while(s < n && text[s] === '\n') s++;
+    if(s >= n) break;
+    let e;
+    if(flowFits(text, ranges, s, n)){ e = n; }
+    else{
+      let lo = s + 1, hi = n;
+      while(lo < hi){
+        const mid = Math.ceil((lo + hi) / 2);
+        if(flowFits(text, ranges, s, mid)) lo = mid; else hi = mid - 1;
+      }
+      e = lo;
+      if(text[e] !== '\n'){
+        const nl = text.lastIndexOf('\n', e - 1);
+        if(nl > s + (e - s) * 0.85) e = nl;
+      }
+    }
+    cards.push(hlHTML(text.slice(s, e).replace(/\n+$/, ''), clipRanges(ranges, s, e)));
+    s = e;
+  }
+  return cards;
+}
+function flowSheetsHTML(cards, autoDuplex){
+  const total = cards.length;
+  const c = state.duplexCalib || {};
+  const ox = c.offsetXmm || 0, oy = c.offsetYmm || 0;
+  let html = '', idx = 0;
+  for(let i = 0; i < total; i += 2){
+    const isBack = autoDuplex && (idx % 2 === 1);
+    const st = (isBack && (ox || oy)) ? ` style="transform:translate(${ox}mm,${oy}mm)"` : '';
+    html += `<div class="psheet"${st}>` + cards.slice(i, i+2).map((h, k) =>
+      `<div class="pcard flow"><div class="pflow-body">${h}</div><div class="pflow-no">${i+k+1} / ${total}</div></div>`
+    ).join('') + '</div>';
+    idx++;
+  }
+  return html;
 }
 
 function renderSheets(htmlList){
