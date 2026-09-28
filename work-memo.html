@@ -252,6 +252,17 @@ main{padding:14px;max-width:720px;margin:0 auto;}
 .pcard.flow{padding:13mm;height:148mm;min-height:0;overflow:hidden;position:relative;}
 .pflow-body{font-family:-apple-system,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;font-size:6pt;line-height:1.55;white-space:pre-wrap;word-break:break-word;color:#000;}
 .pflow-no{position:absolute;right:5mm;bottom:4mm;font-size:5pt;color:#888;}
+/* ---- A6の葉 105×148mm を A4 に4枚（2列×2行）で並べる ---- */
+.fsheet{position:relative;width:210mm;height:297mm;overflow:hidden;page-break-after:always;}
+.fsheet:last-child{page-break-after:auto;}
+.fcard{position:absolute;width:105mm;height:148mm;box-sizing:border-box;overflow:hidden;}
+.fcard.front{padding:6mm 6mm 8mm 10mm;}
+.fcard.back{padding:6mm 10mm 8mm 6mm;}
+.fno{position:absolute;bottom:6mm;font-family:-apple-system,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;font-size:5pt;line-height:1;color:#888;}
+.fcard.front .fno{right:6mm;}
+.fcard.back .fno{right:10mm;}
+.fcut-v{position:absolute;left:105mm;top:0;height:297mm;border-left:0.15mm dashed #b5b5b5;}
+.fcut-h{position:absolute;top:148.5mm;left:0;width:210mm;border-top:0.15mm dashed #b5b5b5;}
 .calib-sheet{width:210mm;height:297mm;position:relative;page-break-after:always;}
 .calib-sheet:last-child{page-break-after:auto;}
 .calib-sheet{overflow:hidden;}
@@ -1168,12 +1179,27 @@ function printCatalog(){
   ];
 }
 
-function printItems(idSet){
+async function printItems(idSet){
   const all = buildFlowText(idSet);
   if(!all.text.trim()){ toast('印刷する内容がありません'); return; }
   const cards = flowPaginate(all);
-  $('#printArea').innerHTML = flowSheetsHTML(cards, !!state.autoDuplex);
-  setTimeout(() => window.print(), 60);
+  const sheets = layoutSheets(cards, !!state.autoDuplex);
+  toast('PDFを作っています…（カード' + cards.length + '枚）');
+  try{
+    const jpegs = [];
+    for(let i = 0; i < sheets.length; i++){
+      jpegs.push(await renderSheetToJpeg(sheets[i], cards.length));
+      await new Promise(r => setTimeout(r, 0));
+    }
+    const blob = buildPdfBlob(jpegs);
+    const note = 'カード' + cards.length + '枚・A4' + sheets.length + '枚' +
+      (state.autoDuplex ? '（自動両面。長辺とじで印刷）' : '（片面）');
+    offerPdf(blob, 'work-memo-print.pdf', '印刷用のPDF', note);
+  }catch(e){
+    console.error(e);
+    toast('PDFを作れませんでした。通常の印刷を使います（縮小される場合があります）');
+    printItemsLegacy(sheets, cards.length);
+  }
 }
 
 document.addEventListener('click', e => {
@@ -1360,11 +1386,11 @@ function buildPdfBlob(jpegs){
 }
 
 // 共有画面は「ボタンを押した直後」でないと開けないことがあるため、PDFができたら確認画面を出して、もう一度押してもらう
-function offerPdf(blob, filename, title){
+function offerPdf(blob, filename, title, note){
   const kb = Math.round(blob.size / 1024);
   const size = kb >= 1024 ? (kb / 1024).toFixed(1) + 'MB' : kb + 'KB';
   const ov = modal(`<h2>${esc(title)}</h2>
-    <p style="font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.7">PDFができました（${size}・A4・原寸）。下のボタンで共有画面を開いて、「プリント」を選んでください。保存はしなくて大丈夫です。</p>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.7">PDFができました（${note ? esc(note) + '・' : ''}${size}・A4・原寸）。下のボタンで共有画面を開いて、「プリント」を選んでください。保存はしなくて大丈夫です。</p>
     <div class="modal-acts" style="justify-content:flex-start;flex-wrap:wrap;gap:8px;margin:0 0 12px">
       <button class="btn-solid proc" data-share>印刷する（共有画面を開く）</button>
     </div>
@@ -1551,8 +1577,10 @@ function buildCardList(chosen){
 }
 
 /* ---- 連続流し込み：見出し・区切りなしで本文を詰め、あふれたら次のカードへ ---- */
-const FLOW_W_MM = 93;    // カード内側の幅（119mm - 左右13mm×2）
-const FLOW_H_MM = 120;   // カード内側の高さ（148mm - 上下13mm×2 = 122mm から2mm安全側）
+const LEAF_W_MM = 105, LEAF_H_MM = 148, ROW_PITCH_MM = 148.5;   // メモ帳の葉（A6）と、A4に2行並べたときの行の間隔
+const PAD_TOP_MM = 6, PAD_BOTTOM_MM = 8, PAD_BIND_MM = 10, PAD_OUT_MM = 6;   // 綴じる側10mm・ほか6mm（下はページ番号ぶん8mm）
+const FLOW_W_MM = LEAF_W_MM - PAD_BIND_MM - PAD_OUT_MM;                  // 文字が入る幅 = 89mm
+const FLOW_H_MM = LEAF_H_MM - PAD_TOP_MM - PAD_BOTTOM_MM - 1;            // 文字が入る高さ = 133mm（1mm安全側）
 let _flowHost = null;
 function getFlowHost(){
   if(_flowHost) return _flowHost;
@@ -1637,91 +1665,156 @@ function flowPaginate(all){
   }
   return cards;
 }
-function flowSheetsHTML(cards, autoDuplex){
-  const total = cards.length;
-  const c = state.duplexCalib || {};
-  const ox = c.offsetXmm || 0, oy = c.offsetYmm || 0;
-  let html = '', idx = 0;
-  for(let i = 0; i < total; i += 2){
-    const isBack = autoDuplex && (idx % 2 === 1);
-    const st = (isBack && (ox || oy)) ? ` style="transform:translate(${ox}mm,${oy}mm)"` : '';
-    html += `<div class="psheet"${st}>` + cards.slice(i, i+2).map((h, k) =>
-      `<div class="pcard flow"><div class="pflow-body">${h}</div><div class="pflow-no">${i+k+1} / ${total}</div></div>`
-    ).join('') + '</div>';
-    idx++;
-  }
-  return html;
-}
-
-function renderSheets(htmlList){
-  let html = '';
-  for(let i=0; i<htmlList.length; i+=CARDS_PER_SHEET){
-    html += '<div class="psheet">' + htmlList.slice(i, i+CARDS_PER_SHEET).join('') + '</div>';
-  }
-  return html || '<p style="padding:20px">印刷する内容がありません</p>';
-}
-
-/* ---- 両面印刷：同じ項目の続きページだけを表裏にペアリング ---- */
-function pairFrontBack(cardObjs){
-  const slots = [];
-  let i = 0;
-  while(i < cardObjs.length){
-    const cur = cardObjs[i];
-    const next = cardObjs[i+1];
-    if(next && next.groupId === cur.groupId && next.pageIndex === cur.pageIndex+1){
-      slots.push({front: cur.html, back: next.html});
-      i += 2;
-    }else{
-      slots.push({front: cur.html, back: null});
-      i += 1;
+/* ---- 4枚付けのレイアウト：両面のときは「葉の表＝偶数番のカード、その裏＝次のカード」になるように並べる ---- */
+function layoutSheets(cards, autoDuplex){
+  const sheets = [];
+  const pos = k => ({col: k % 2, row: Math.floor(k / 2)});
+  const mk = isBack => ({isBack, cells: []});
+  if(!autoDuplex){
+    for(let i = 0; i < cards.length; i += 4){
+      const sh = mk(false);
+      cards.slice(i, i + 4).forEach((h, k) => sh.cells.push({html: h, no: i + k + 1, col: pos(k).col, row: pos(k).row}));
+      sheets.push(sh);
     }
+    return sheets;
   }
-  return slots;
-}
-function emptyCardHTML(){
-  return '<div class="pcard"></div>';
-}
-function calibShiftForSlot(idx){
-  const topY = 297 - idx*CARD_H_MM;         // top edge of this card, mm from page bottom
-  const centerY = topY - CARD_H_MM/2;        // vertical center of this card
-  const frac = Math.max(0, Math.min(1, centerY/297));
-  const calib = state.duplexCalib || {shiftTopMm:-1.0};
-  return calib.shiftTopMm * frac;
-}
-function buildDuplexHTML(slots){
-  let frontHTML = '', backHTML = '';
-  for(let i=0; i<slots.length; i+=CARDS_PER_SHEET){
-    const group = slots.slice(i, i+CARDS_PER_SHEET);
-    frontHTML += '<div class="psheet">' + group.map(s => s.front || emptyCardHTML()).join('') + '</div>';
-    backHTML += '<div class="psheet">' + group.map((s, idx) => {
-      const html = s.back || emptyCardHTML();
-      const shift = calibShiftForSlot(idx).toFixed(2);
-      return `<div class="pcard-shift" style="transform:translateX(${shift}mm)">${html}</div>`;
-    }).join('') + '</div>';
+  for(let m = 0; m < cards.length; m += 8){
+    const f = mk(false), b = mk(true);
+    for(let k = 0; k < 4; k++){
+      const fi = m + 2 * k, bi = fi + 1;
+      if(fi >= cards.length) break;
+      f.cells.push({html: cards[fi], no: fi + 1, col: pos(k).col, row: pos(k).row});
+      // 長辺とじで裏返すと左右が入れ替わるので、裏は同じ行の反対側の列に置く
+      if(bi < cards.length) b.cells.push({html: cards[bi], no: bi + 1, col: 1 - pos(k).col, row: pos(k).row});
+    }
+    sheets.push(f);
+    if(b.cells.length) sheets.push(b);
   }
-  return {frontHTML, backHTML};
+  return sheets;
 }
-function openDuplexPrintPanel(cardObjs){
-  const slots = pairFrontBack(cardObjs);
-  const {frontHTML, backHTML} = buildDuplexHTML(slots);
-  const ov = modal(`<h2>両面印刷</h2>
-    <p style="font-size:13px;color:var(--muted);margin:0 0 12px">① を印刷 → 紙を裏返してセットし直す → ② を印刷、の順で進めてください。</p>
-    <div class="modal-acts" style="justify-content:flex-start;flex-wrap:wrap;gap:8px">
-      <button class="btn-solid" data-front>① 表面を印刷</button>
-      <button class="btn-solid proc" data-back>② 裏面を印刷</button>
-    </div>
-    <div class="modal-acts">
-      <button class="btn-ghost" data-x>閉じる</button>
-    </div>`);
-  ov.querySelector('[data-x]').onclick = () => ov.remove();
-  ov.querySelector('[data-front]').onclick = () => {
-    $('#printArea').innerHTML = frontHTML;
-    setTimeout(() => window.print(), 60);
-  };
-  ov.querySelector('[data-back]').onclick = () => {
-    $('#printArea').innerHTML = backHTML;
-    setTimeout(() => window.print(), 60);
-  };
+
+function sheetDOM(sheet, total, withOffset){
+  const wrap = document.createElement('div');
+  wrap.className = 'fsheet';
+  sheet.cells.forEach(c => {
+    const d = document.createElement('div');
+    d.className = 'fcard ' + (sheet.isBack ? 'back' : 'front');
+    d.style.left = (c.col * LEAF_W_MM) + 'mm';
+    d.style.top = (c.row * ROW_PITCH_MM) + 'mm';
+    d.innerHTML = '<div class="pflow-body">' + c.html + '</div><div class="fno">' + c.no + ' / ' + total + '</div>';
+    wrap.appendChild(d);
+  });
+  if(!sheet.isBack){
+    wrap.insertAdjacentHTML('beforeend', '<div class="fcut-v"></div><div class="fcut-h"></div>');
+  }
+  if(withOffset && sheet.isBack){
+    const cal = state.duplexCalib || {};
+    const ox = cal.offsetXmm || 0, oy = cal.offsetYmm || 0;
+    if(ox || oy) wrap.style.transform = 'translate(' + ox + 'mm,' + oy + 'mm)';
+  }
+  return wrap;
+}
+
+function canvasToJpeg(c){
+  const w = c.width, h = c.height;
+  return new Promise((resolve, reject) => {
+    c.toBlob(b => {
+      if(!b){ reject(new Error('toBlob failed')); return; }
+      b.arrayBuffer().then(buf => resolve({bytes: new Uint8Array(buf), w, h}));
+    }, 'image/jpeg', 0.95);
+  });
+}
+
+// 文字の基準線（ベースライン）が、1文字の枠の上端から何px下にあるかを、実際の表示から測る
+function measureBaselines(stage){
+  const out = {};
+  [['body', 'pflow-body'], ['no', 'fno']].forEach(([key, cls]) => {
+    const card = document.createElement('div');
+    card.className = 'fcard front';
+    card.style.left = '0'; card.style.top = '0';
+    const inner = document.createElement('div');
+    inner.className = cls;
+    const probe = document.createElement('span');
+    probe.style.cssText = 'display:inline-block;width:0;height:0;';
+    inner.appendChild(probe);
+    const t = document.createTextNode('あ');
+    inner.appendChild(t);
+    card.appendChild(inner);
+    stage.appendChild(card);
+    const rg = document.createRange();
+    rg.setStart(t, 0); rg.setEnd(t, 1);
+    out[key] = probe.getBoundingClientRect().bottom - rg.getBoundingClientRect().top;
+    stage.removeChild(card);
+  });
+  return out;
+}
+
+// 画面上の配置（mm）をそのまま使い、1文字ずつ位置を読み取って300dpiのキャンバスに描く → JPEG
+async function renderSheetToJpeg(sheet, total){
+  const K = PDF_DPI / 96, MM = PDF_DPI / 25.4;
+  const stage = document.createElement('div');
+  stage.style.cssText = 'position:fixed;left:-10000px;top:0;width:210mm;height:297mm;visibility:hidden;pointer-events:none;';
+  document.body.appendChild(stage);
+  try{
+    const base = measureBaselines(stage);
+    const dom = sheetDOM(sheet, total, false);
+    stage.appendChild(dom);
+    const origin = dom.getBoundingClientRect();
+    const c = document.createElement('canvas');
+    c.width = PDF_PX_W; c.height = PDF_PX_H;
+    const x = c.getContext('2d');
+    x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
+    const cal = state.duplexCalib || {};
+    const dx = sheet.isBack ? (cal.offsetXmm || 0) * MM : 0;
+    const dy = sheet.isBack ? (cal.offsetYmm || 0) * MM : 0;
+    x.textBaseline = 'alphabetic';
+    const range = document.createRange();
+    const walker = document.createTreeWalker(dom, NodeFilter.SHOW_TEXT);
+    let node;
+    while((node = walker.nextNode())){
+      const par = node.parentElement;
+      if(!par) continue;
+      const cs = getComputedStyle(par);
+      const sizePx = parseFloat(cs.fontSize) * K;
+      x.font = cs.fontStyle + ' ' + cs.fontWeight + ' ' + sizePx + 'px ' + cs.fontFamily;
+      const bg = par.tagName === 'MARK' ? cs.backgroundColor : null;
+      const ascent = base[par.closest('.fno') ? 'no' : 'body'];
+      const text = node.nodeValue;
+      for(let i = 0; i < text.length; ){
+        const cp = text.codePointAt(i), len = cp > 0xFFFF ? 2 : 1;
+        const ch = text.slice(i, i + len);
+        range.setStart(node, i); range.setEnd(node, i + len);
+        i += len;
+        if(ch === '\n' || ch === '\r') continue;
+        const r = range.getBoundingClientRect();
+        if(!r || (!r.width && !r.height)) continue;
+        const px = (r.left - origin.left) * K + dx, py = (r.top - origin.top) * K + dy;
+        if(bg){ x.fillStyle = bg; x.fillRect(px - 0.5, py, r.width * K + 1, r.height * K); }
+        if(/\s/.test(ch)) continue;
+        x.fillStyle = cs.color;
+        x.fillText(ch, px, py + ascent * K);
+      }
+    }
+    if(!sheet.isBack){
+      x.strokeStyle = '#b5b5b5'; x.lineWidth = 0.15 * MM; x.setLineDash([1.5 * MM, 1.5 * MM]);
+      x.beginPath();
+      x.moveTo(LEAF_W_MM * MM, 0); x.lineTo(LEAF_W_MM * MM, c.height);
+      x.moveTo(0, ROW_PITCH_MM * MM); x.lineTo(c.width, ROW_PITCH_MM * MM);
+      x.stroke();
+    }
+    const out = await canvasToJpeg(c);
+    c.width = 1; c.height = 1;
+    return out;
+  } finally {
+    stage.remove();
+  }
+}
+
+function printItemsLegacy(sheets, total){
+  const area = $('#printArea');
+  area.innerHTML = '';
+  sheets.forEach(sh => area.appendChild(sheetDOM(sh, total, true)));
+  setTimeout(() => window.print(), 60);
 }
 
 /* ---- CSV書き出し（スプレッドシート用） ---- */
