@@ -1581,23 +1581,74 @@ const LEAF_W_MM = 105, LEAF_H_MM = 148, ROW_PITCH_MM = 148.5;   // メモ帳の�
 const PAD_TOP_MM = 6, PAD_BOTTOM_MM = 8, PAD_BIND_MM = 10, PAD_OUT_MM = 6;   // 綴じる側10mm・ほか6mm（下はページ番号ぶん8mm）
 const FLOW_W_MM = LEAF_W_MM - PAD_BIND_MM - PAD_OUT_MM;                  // 文字が入る幅 = 89mm
 const FLOW_H_MM = LEAF_H_MM - PAD_TOP_MM - PAD_BOTTOM_MM - 1;            // 文字が入る高さ = 133mm（1mm安全側）
-let _flowHost = null;
-function getFlowHost(){
-  if(_flowHost) return _flowHost;
-  const w = document.createElement('div');
-  w.style.cssText = 'position:fixed;left:-9999px;top:0;visibility:hidden;width:' + FLOW_W_MM + 'mm;';
-  w.innerHTML = '<div class="pflow-body"></div>';
-  document.body.appendChild(w);
-  _flowHost = w.firstChild;
-  return _flowHost;
-}
 function clipRanges(ranges, s, e){
   return ranges.map(([a,b]) => [Math.max(a,s)-s, Math.min(b,e)-s]).filter(r => r[1] > r[0]);
 }
+
+/* ---- 文字の折り返しを自前で計算する（DOMから位置を読み取ると崩れることがあったため）----
+   ページに分ける判定と、実際にJPEGへ描く処理の、両方で同じ計算を使う */
+const CARD_PX_PER_MM = PDF_DPI / 25.4;
+const CARD_FONT_PT = 6, CARD_LINE_H = 1.55;
+let _measureCtx = null, _measureFontPx = 0, _measureAscent = 0;
+function getMeasureCtx(){
+  if(_measureCtx) return _measureCtx;
+  const c = document.createElement('canvas');
+  c.width = 2; c.height = 2;
+  const ctx = c.getContext('2d');
+  _measureFontPx = CARD_FONT_PT / 72 * PDF_DPI;
+  ctx.font = _measureFontPx.toFixed(2) + 'px -apple-system,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif';
+  ctx.textBaseline = 'alphabetic';
+  const m = ctx.measureText('あ');
+  _measureAscent = m.actualBoundingBoxAscent || _measureFontPx * 0.88;
+  _measureCtx = ctx;
+  return ctx;
+}
+// 折り返し後の行を返す。1行 = [{ch, hi}, ...]（hi = ハイライトの文字かどうか）
+function wrapLines(text, ranges, maxWidthPx){
+  const ctx = getMeasureCtx();
+  const hitAt = i => ranges.some(([s,e]) => i >= s && i < e);
+  const paras = text.split('\n');
+  const lines = [];
+  let idx = 0;
+  paras.forEach((para, pi) => {
+    if(pi > 0) idx += 1;
+    if(para.length === 0){ lines.push([]); return; }
+    let cur = [], curW = 0;
+    const flush = () => { lines.push(cur); cur = []; curW = 0; };
+    let i = 0;
+    while(i < para.length){
+      const ch = para[i];
+      let tokEnd = i + 1;
+      if(/[A-Za-z0-9]/.test(ch)){
+        while(tokEnd < para.length && /[A-Za-z0-9]/.test(para[tokEnd])) tokEnd++;
+      }
+      const tokStr = para.slice(i, tokEnd);
+      const chars = [];
+      for(let k = 0; k < tokStr.length; k++) chars.push({ch: tokStr[k], hi: hitAt(idx + i + k)});
+      const w = ctx.measureText(tokStr).width;
+      if(curW + w > maxWidthPx && cur.length > 0) flush();
+      if(w > maxWidthPx){
+        chars.forEach(c => {
+          const cw = ctx.measureText(c.ch).width;
+          if(curW + cw > maxWidthPx && cur.length > 0) flush();
+          cur.push(c); curW += cw;
+        });
+      }else{
+        cur.push(...chars); curW += w;
+      }
+      i = tokEnd;
+    }
+    lines.push(cur);
+    idx += para.length;
+  });
+  return lines;
+}
 function flowFits(text, ranges, s, e){
-  const host = getFlowHost();
-  host.innerHTML = hlHTML(text.slice(s, e), clipRanges(ranges, s, e));
-  return host.getBoundingClientRect().height <= FLOW_H_MM * MM_TO_PX;
+  const maxWidthPx = FLOW_W_MM * CARD_PX_PER_MM;
+  const maxHeightPx = FLOW_H_MM * CARD_PX_PER_MM;
+  const lineHeightPx = _measureFontPx ? _measureFontPx * CARD_LINE_H : (getMeasureCtx(), _measureFontPx * CARD_LINE_H);
+  const lines = wrapLines(text.slice(s, e), clipRanges(ranges, s, e), maxWidthPx);
+  return lines.length * lineHeightPx <= maxHeightPx;
 }
 function joinParts(parts, sep){
   let text = '', ranges = [];
@@ -1660,7 +1711,8 @@ function flowPaginate(all){
         if(nl > s + (e - s) * 0.85) e = nl;
       }
     }
-    cards.push(hlHTML(text.slice(s, e).replace(/\n+$/, ''), clipRanges(ranges, s, e)));
+    const cardText = text.slice(s, e).replace(/\n+$/, '');
+    cards.push({text: cardText, ranges: clipRanges(ranges, s, e)});
     s = e;
   }
   return cards;
@@ -1673,7 +1725,7 @@ function layoutSheets(cards, autoDuplex){
   if(!autoDuplex){
     for(let i = 0; i < cards.length; i += 4){
       const sh = mk(false);
-      cards.slice(i, i + 4).forEach((h, k) => sh.cells.push({html: h, no: i + k + 1, col: pos(k).col, row: pos(k).row}));
+      cards.slice(i, i + 4).forEach((h, k) => sh.cells.push({card: h, no: i + k + 1, col: pos(k).col, row: pos(k).row}));
       sheets.push(sh);
     }
     return sheets;
@@ -1683,9 +1735,9 @@ function layoutSheets(cards, autoDuplex){
     for(let k = 0; k < 4; k++){
       const fi = m + 2 * k, bi = fi + 1;
       if(fi >= cards.length) break;
-      f.cells.push({html: cards[fi], no: fi + 1, col: pos(k).col, row: pos(k).row});
+      f.cells.push({card: cards[fi], no: fi + 1, col: pos(k).col, row: pos(k).row});
       // 長辺とじで裏返すと左右が入れ替わるので、裏は同じ行の反対側の列に置く
-      if(bi < cards.length) b.cells.push({html: cards[bi], no: bi + 1, col: 1 - pos(k).col, row: pos(k).row});
+      if(bi < cards.length) b.cells.push({card: cards[bi], no: bi + 1, col: 1 - pos(k).col, row: pos(k).row});
     }
     sheets.push(f);
     if(b.cells.length) sheets.push(b);
@@ -1701,7 +1753,7 @@ function sheetDOM(sheet, total, withOffset){
     d.className = 'fcard ' + (sheet.isBack ? 'back' : 'front');
     d.style.left = (c.col * LEAF_W_MM) + 'mm';
     d.style.top = (c.row * ROW_PITCH_MM) + 'mm';
-    d.innerHTML = '<div class="pflow-body">' + c.html + '</div><div class="fno">' + c.no + ' / ' + total + '</div>';
+    d.innerHTML = '<div class="pflow-body">' + hlHTML(c.card.text, c.card.ranges) + '</div><div class="fno">' + c.no + ' / ' + total + '</div>';
     wrap.appendChild(d);
   });
   if(!sheet.isBack){
@@ -1715,6 +1767,67 @@ function sheetDOM(sheet, total, withOffset){
   return wrap;
 }
 
+function drawWrappedText(ctx, lines, originXpx, originYpx, lineHeightPx){
+  lines.forEach((line, li) => {
+    let x = originXpx;
+    const y = originYpx + li * lineHeightPx;
+    line.forEach(c => {
+      const w = ctx.measureText(c.ch).width;
+      if(c.hi){
+        ctx.fillStyle = '#FFE066';
+        ctx.fillRect(x, y, w, lineHeightPx);
+      }
+      if(!/\s/.test(c.ch)){
+        ctx.fillStyle = '#000';
+        ctx.fillText(c.ch, x, y + _measureAscent);
+      }
+      x += w;
+    });
+  });
+}
+
+async function renderSheetToJpeg(sheet, total){
+  getMeasureCtx();
+  const MM = CARD_PX_PER_MM;
+  const c = document.createElement('canvas');
+  c.width = PDF_PX_W; c.height = PDF_PX_H;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.textBaseline = 'alphabetic';
+  const cal = state.duplexCalib || {};
+  const dx = sheet.isBack ? (cal.offsetXmm || 0) * MM : 0;
+  const dy = sheet.isBack ? (cal.offsetYmm || 0) * MM : 0;
+  const maxWidthPx = FLOW_W_MM * MM;
+  const lineHeightPx = _measureFontPx * CARD_LINE_H;
+  const noFontPx = 5 / 72 * PDF_DPI;
+  sheet.cells.forEach(cell => {
+    const padLeft = (sheet.isBack ? PAD_OUT_MM : PAD_BIND_MM) * MM;
+    const padTop = PAD_TOP_MM * MM;
+    const cellX = cell.col * LEAF_W_MM * MM + dx;
+    const cellY = cell.row * ROW_PITCH_MM * MM + dy;
+    const lines = wrapLines(cell.card.text, cell.card.ranges, maxWidthPx);
+    ctx.font = _measureFontPx.toFixed(2) + 'px -apple-system,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif';
+    drawWrappedText(ctx, lines, cellX + padLeft, cellY + padTop, lineHeightPx);
+    ctx.font = noFontPx.toFixed(2) + 'px -apple-system,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif';
+    ctx.fillStyle = '#888';
+    const label = cell.no + ' / ' + total;
+    const lw = ctx.measureText(label).width;
+    const noY = cellY + (LEAF_H_MM - PAD_BOTTOM_MM + 2) * MM;
+    const noX = sheet.isBack ? (cellX + PAD_OUT_MM * MM) : (cellX + LEAF_W_MM * MM - PAD_OUT_MM * MM - lw);
+    ctx.fillText(label, noX, noY);
+  });
+  if(!sheet.isBack){
+    ctx.strokeStyle = '#b5b5b5'; ctx.lineWidth = 0.15 * MM; ctx.setLineDash([1.5 * MM, 1.5 * MM]);
+    ctx.beginPath();
+    ctx.moveTo(LEAF_W_MM * MM, 0); ctx.lineTo(LEAF_W_MM * MM, c.height);
+    ctx.moveTo(0, ROW_PITCH_MM * MM); ctx.lineTo(c.width, ROW_PITCH_MM * MM);
+    ctx.stroke();
+  }
+  const out = await canvasToJpeg(c);
+  c.width = 1; c.height = 1;
+  return out;
+}
+
 function canvasToJpeg(c){
   const w = c.width, h = c.height;
   return new Promise((resolve, reject) => {
@@ -1723,91 +1836,6 @@ function canvasToJpeg(c){
       b.arrayBuffer().then(buf => resolve({bytes: new Uint8Array(buf), w, h}));
     }, 'image/jpeg', 0.95);
   });
-}
-
-// 文字の基準線（ベースライン）が、1文字の枠の上端から何px下にあるかを、実際の表示から測る
-function measureBaselines(stage){
-  const out = {};
-  [['body', 'pflow-body'], ['no', 'fno']].forEach(([key, cls]) => {
-    const card = document.createElement('div');
-    card.className = 'fcard front';
-    card.style.left = '0'; card.style.top = '0';
-    const inner = document.createElement('div');
-    inner.className = cls;
-    const probe = document.createElement('span');
-    probe.style.cssText = 'display:inline-block;width:0;height:0;';
-    inner.appendChild(probe);
-    const t = document.createTextNode('あ');
-    inner.appendChild(t);
-    card.appendChild(inner);
-    stage.appendChild(card);
-    const rg = document.createRange();
-    rg.setStart(t, 0); rg.setEnd(t, 1);
-    out[key] = probe.getBoundingClientRect().bottom - rg.getBoundingClientRect().top;
-    stage.removeChild(card);
-  });
-  return out;
-}
-
-// 画面上の配置（mm）をそのまま使い、1文字ずつ位置を読み取って300dpiのキャンバスに描く → JPEG
-async function renderSheetToJpeg(sheet, total){
-  const K = PDF_DPI / 96, MM = PDF_DPI / 25.4;
-  const stage = document.createElement('div');
-  stage.style.cssText = 'position:fixed;left:-10000px;top:0;width:210mm;height:297mm;visibility:hidden;pointer-events:none;';
-  document.body.appendChild(stage);
-  try{
-    const base = measureBaselines(stage);
-    const dom = sheetDOM(sheet, total, false);
-    stage.appendChild(dom);
-    const origin = dom.getBoundingClientRect();
-    const c = document.createElement('canvas');
-    c.width = PDF_PX_W; c.height = PDF_PX_H;
-    const x = c.getContext('2d');
-    x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
-    const cal = state.duplexCalib || {};
-    const dx = sheet.isBack ? (cal.offsetXmm || 0) * MM : 0;
-    const dy = sheet.isBack ? (cal.offsetYmm || 0) * MM : 0;
-    x.textBaseline = 'alphabetic';
-    const range = document.createRange();
-    const walker = document.createTreeWalker(dom, NodeFilter.SHOW_TEXT);
-    let node;
-    while((node = walker.nextNode())){
-      const par = node.parentElement;
-      if(!par) continue;
-      const cs = getComputedStyle(par);
-      const sizePx = parseFloat(cs.fontSize) * K;
-      x.font = cs.fontStyle + ' ' + cs.fontWeight + ' ' + sizePx + 'px ' + cs.fontFamily;
-      const bg = par.tagName === 'MARK' ? cs.backgroundColor : null;
-      const ascent = base[par.closest('.fno') ? 'no' : 'body'];
-      const text = node.nodeValue;
-      for(let i = 0; i < text.length; ){
-        const cp = text.codePointAt(i), len = cp > 0xFFFF ? 2 : 1;
-        const ch = text.slice(i, i + len);
-        range.setStart(node, i); range.setEnd(node, i + len);
-        i += len;
-        if(ch === '\n' || ch === '\r') continue;
-        const r = range.getBoundingClientRect();
-        if(!r || (!r.width && !r.height)) continue;
-        const px = (r.left - origin.left) * K + dx, py = (r.top - origin.top) * K + dy;
-        if(bg){ x.fillStyle = bg; x.fillRect(px - 0.5, py, r.width * K + 1, r.height * K); }
-        if(/\s/.test(ch)) continue;
-        x.fillStyle = cs.color;
-        x.fillText(ch, px, py + ascent * K);
-      }
-    }
-    if(!sheet.isBack){
-      x.strokeStyle = '#b5b5b5'; x.lineWidth = 0.15 * MM; x.setLineDash([1.5 * MM, 1.5 * MM]);
-      x.beginPath();
-      x.moveTo(LEAF_W_MM * MM, 0); x.lineTo(LEAF_W_MM * MM, c.height);
-      x.moveTo(0, ROW_PITCH_MM * MM); x.lineTo(c.width, ROW_PITCH_MM * MM);
-      x.stroke();
-    }
-    const out = await canvasToJpeg(c);
-    c.width = 1; c.height = 1;
-    return out;
-  } finally {
-    stage.remove();
-  }
 }
 
 function printItemsLegacy(sheets, total){
