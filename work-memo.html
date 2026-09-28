@@ -1296,11 +1296,126 @@ function calibSVG(kind, ox, oy, confirmMode){
   return `<svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="297mm" viewBox="0 0 210 297"><g${tr}>${g}</g></svg>`;
 }
 
-function printCalibSheets(confirmMode, ox, oy){
+/* ---- PDF出力：iPhoneの印刷は用紙に合わせて縮小されるため、A4ちょうどのPDFを作って共有画面から印刷する ---- */
+const PDF_DPI = 300;
+const PDF_PX_W = Math.round(210 / 25.4 * PDF_DPI);
+const PDF_PX_H = Math.round(297 / 25.4 * PDF_DPI);
+
+function svgToJpeg(svgStr){
+  return new Promise((resolve, reject) => {
+    const s = svgStr.replace('width="210mm"', 'width="' + PDF_PX_W + '"').replace('height="297mm"', 'height="' + PDF_PX_H + '"');
+    const url = URL.createObjectURL(new Blob([s], {type:'image/svg+xml;charset=utf-8'}));
+    const img = new Image();
+    img.onload = () => {
+      try{
+        const c = document.createElement('canvas');
+        c.width = PDF_PX_W; c.height = PDF_PX_H;
+        const x = c.getContext('2d');
+        x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
+        x.drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        c.toBlob(b => {
+          if(!b){ reject(new Error('toBlob failed')); return; }
+          b.arrayBuffer().then(buf => { c.width = 1; c.height = 1; resolve({bytes:new Uint8Array(buf), w:PDF_PX_W, h:PDF_PX_H}); });
+        }, 'image/jpeg', 0.95);
+      }catch(e){ URL.revokeObjectURL(url); reject(e); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('svg load failed')); };
+    img.src = url;
+  });
+}
+
+function buildPdfBlob(jpegs){
+  const enc = new TextEncoder();
+  const parts = [], offsets = [];
+  let pos = 0;
+  const push = d => { const u = (typeof d === 'string') ? enc.encode(d) : d; parts.push(u); pos += u.length; };
+  const obj = (n, head, stream) => {
+    offsets[n] = pos;
+    push(n + ' 0 obj\n' + head + '\n');
+    if(stream){ push('stream\n'); push(stream); push('\nendstream\n'); }
+    push('endobj\n');
+  };
+  const PW = 595.276, PH = 841.890;   // A4 = 210x297mm をptで
+  const n = jpegs.length;
+  push('%PDF-1.4\n');
+  push(new Uint8Array([0x25, 0xE2, 0xE3, 0xCF, 0xD3, 0x0A]));
+  obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
+  const kids = jpegs.map((_, i) => (3 + 3 * i) + ' 0 R').join(' ');
+  obj(2, '<< /Type /Pages /Kids [' + kids + '] /Count ' + n + ' >>');
+  jpegs.forEach((j, i) => {
+    const pg = 3 + 3 * i, ct = 4 + 3 * i, im = 5 + 3 * i;
+    obj(pg, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + PW + ' ' + PH + '] /Resources << /XObject << /Im0 ' + im + ' 0 R >> >> /Contents ' + ct + ' 0 R >>');
+    const content = 'q ' + PW + ' 0 0 ' + PH + ' 0 0 cm /Im0 Do Q';
+    obj(ct, '<< /Length ' + content.length + ' >>', enc.encode(content));
+    obj(im, '<< /Type /XObject /Subtype /Image /Width ' + j.w + ' /Height ' + j.h + ' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ' + j.bytes.length + ' >>', j.bytes);
+  });
+  const total = 3 + 3 * n;
+  const xrefPos = pos;
+  push('xref\n0 ' + total + '\n');
+  push('0000000000 65535 f \n');
+  for(let k = 1; k < total; k++) push(String(offsets[k]).padStart(10, '0') + ' 00000 n \n');
+  push('trailer\n<< /Size ' + total + ' /Root 1 0 R >>\nstartxref\n' + xrefPos + '\n%%EOF\n');
+  return new Blob(parts, {type:'application/pdf'});
+}
+
+// 共有画面は「ボタンを押した直後」でないと開けないことがあるため、PDFができたら確認画面を出して、もう一度押してもらう
+function offerPdf(blob, filename, title){
+  const kb = Math.round(blob.size / 1024);
+  const size = kb >= 1024 ? (kb / 1024).toFixed(1) + 'MB' : kb + 'KB';
+  const ov = modal(`<h2>${esc(title)}</h2>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.7">PDFができました（${size}・A4・原寸）。下のボタンで共有画面を開いて、「プリント」を選んでください。保存はしなくて大丈夫です。</p>
+    <div class="modal-acts" style="justify-content:flex-start;flex-wrap:wrap;gap:8px;margin:0 0 12px">
+      <button class="btn-solid proc" data-share>印刷する（共有画面を開く）</button>
+    </div>
+    <div class="modal-acts" style="justify-content:space-between">
+      <button class="btn-ghost" data-open>PDFを開く</button>
+      <button class="btn-ghost" data-x>閉じる</button>
+    </div>`);
+  ov.querySelector('[data-x]').onclick = () => ov.remove();
+  ov.querySelector('[data-open]').onclick = () => {
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, '_blank');
+    if(!w) toast('PDFを開けませんでした');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  };
+  ov.querySelector('[data-share]').onclick = async () => {
+    const file = new File([blob], filename, {type:'application/pdf'});
+    try{
+      if(navigator.canShare && navigator.canShare({files:[file]})){
+        await navigator.share({files:[file]});
+        return;
+      }
+      toast('この端末では共有画面が使えません。「PDFを開く」を試してください');
+    }catch(e){
+      if(e && e.name === 'AbortError') return;
+      console.error(e);
+      toast('共有画面を開けませんでした。「PDFを開く」を試してください');
+    }
+  };
+}
+
+function printCalibSheetsLegacy(confirmMode, ox, oy){
   $('#printArea').innerHTML =
     '<div class="calib-sheet">' + calibSVG('front', 0, 0, false) + '</div>' +
     '<div class="calib-sheet">' + calibSVG('back', ox || 0, oy || 0, !!confirmMode) + '</div>';
   setTimeout(() => window.print(), 60);
+}
+
+async function printCalibSheets(confirmMode, ox, oy){
+  toast('PDFを作っています…');
+  try{
+    const front = await svgToJpeg(calibSVG('front', 0, 0, false));
+    const back = await svgToJpeg(calibSVG('back', ox || 0, oy || 0, !!confirmMode));
+    const blob = buildPdfBlob([front, back]);
+    offerPdf(blob,
+      confirmMode ? 'calibration-confirm.pdf' : 'calibration-sheet.pdf',
+      confirmMode ? '確認用紙のPDF' : 'キャリブレーション用紙のPDF');
+  }catch(e){
+    console.error(e);
+    toast('PDFを作れませんでした。通常の印刷を使います（縮小される場合があります）');
+    printCalibSheetsLegacy(confirmMode, ox, oy);
+  }
 }
 
 $('#btnDuplexSetup').onclick = () => {
