@@ -319,6 +319,8 @@ main{padding:14px;max-width:720px;margin:0 auto;}
       <button class="tool-btn" id="btnHL">🖍 マーカー</button>
       <button class="tool-btn" id="btnDuplexSetup">⚙ 両面設定</button>
       <button class="tool-btn" id="btnPrint">印刷</button>
+      <button class="tool-btn" id="btnPick">🎯 今日はこれ</button>
+      <button class="tool-btn" id="btnAiKey">🔑 AIキー</button>
       <button class="tool-btn" id="btnLogout">ログアウト</button>
     </div>
   </div>
@@ -849,6 +851,137 @@ function confirmDel(message, onOk){
   ov.querySelector('[data-ok]').onclick = () => { ov.remove(); onOk(); };
 }
 
+/* ============ 今日はこれ（AIによる項目選び） ============ */
+const AI_KEY_STORAGE = 'work-memo-anthropic-key';
+function getApiKey(){ try{ return localStorage.getItem(AI_KEY_STORAGE) || ''; }catch(e){ return ''; } }
+function setApiKey(k){ try{ localStorage.setItem(AI_KEY_STORAGE, k); }catch(e){} }
+
+function askApiKey(onOk){
+  const ov = modal(`<h2>AIキーの設定</h2>
+    <p style="font-size:13px;color:var(--muted);line-height:1.7;margin:0 0 10px">Anthropic ConsoleでAPIキーを発行して、ここに入れてください。この端末のブラウザだけに保存され、Googleドライブには保存されません。</p>
+    <input id="akv" type="password" placeholder="sk-ant-...">
+    <div class="modal-acts">
+      <button class="btn-ghost" data-clear>キーを消す</button>
+      <button class="btn-ghost" data-x>やめる</button>
+      <button class="btn-solid" data-ok>保存</button>
+    </div>`);
+  const inp = ov.querySelector('#akv');
+  inp.value = getApiKey();
+  setTimeout(() => inp.focus(), 40);
+  ov.querySelector('[data-x]').onclick = () => ov.remove();
+  ov.querySelector('[data-clear]').onclick = () => { setApiKey(''); ov.remove(); toast('キーを消しました'); };
+  ov.querySelector('[data-ok]').onclick = () => {
+    const v = inp.value.trim();
+    if(!v) return;
+    setApiKey(v);
+    ov.remove();
+    toast('保存しました');
+    if(onOk) onOk();
+  };
+}
+
+async function pickTask(){
+  const key = getApiKey();
+  if(!key){ askApiKey(() => pickTask()); return; }
+
+  const now = Date.now();
+  const items = [];
+  state.memos.forEach(m => items.push({
+    id: 'memo:'+m.id, domKey: 'memo:'+m.id, tabKey:'memo', tabLabel:'とりあえず入力',
+    text: m.text, daysAgo: Math.floor((now-(m.updated||m.created))/86400000)
+  }));
+  state.todos.filter(t => !t.done).forEach(t => items.push({
+    id: 'todo:'+t.id, domKey: 'todotext:'+t.id, tabKey:'todo', tabLabel:'調べること',
+    text: t.text + (t.note ? '\n（分かったこと：'+t.note+'）' : ''), daysAgo: Math.floor((now-(t.updated||t.created))/86400000)
+  }));
+
+  if(!items.length){ toast('「とりあえず入力」と「調べること」に項目がありません'); return; }
+
+  const ov = modal('<h2>考え中…</h2><p style="color:var(--muted);font-size:13px;margin:0">少し待ってください</p>');
+
+  const sys = 'あなたは仕事用メモアプリ「work-memo」の中から、ユーザーが次に取り組むとよい項目を1つだけ選ぶアシスタントです。\n'
+    + '以下を考慮してください：\n'
+    + '・更新されず長く放置されているもの（daysAgoが大きいもの）を優先する\n'
+    + '・「至急」「急ぎ」「期限」「早めに」などの言葉が含まれるものは特に優先する\n'
+    + '・あいまいすぎて何をすればよいか分からない項目は避ける\n'
+    + '・毎回同じような項目ばかりにならないよう、多少の意外性も混ぜてよい\n'
+    + '必ず次のJSON形式のみで、他の文章を一切つけずに返してください：\n'
+    + '{"id":"選んだ項目のid","reason":"選んだ理由を日本語で1〜2文、やさしい言い方で"}';
+
+  const userMsg = '項目一覧（JSON）:\n' + JSON.stringify(items.map(it => ({id: it.id, tab: it.tabLabel, text: it.text, daysAgo: it.daysAgo})));
+
+  try{
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 300,
+        system: sys,
+        messages: [{role:'user', content: userMsg}]
+      })
+    });
+    if(!res.ok){
+      const errText = await res.text().catch(() => '');
+      let msg = 'APIエラー：'+res.status;
+      if(res.status === 401) msg = 'AIキーが正しくないようです。🔑 AIキーから入れ直してください';
+      else if(errText) msg += ' '+errText.slice(0,160);
+      throw new Error(msg);
+    }
+    const data = await res.json();
+    const textBlock = (data.content||[]).find(c => c.type === 'text');
+    if(!textBlock) throw new Error('応答が読み取れませんでした');
+    let parsed;
+    try{ parsed = JSON.parse(textBlock.text.trim()); }
+    catch(e){
+      const m = textBlock.text.match(/\{[\s\S]*\}/);
+      if(m) parsed = JSON.parse(m[0]);
+      else throw new Error('応答の形式が正しくありませんでした');
+    }
+    const picked = items.find(it => it.id === parsed.id);
+    ov.remove();
+    if(!picked){ toast('選んだ項目が見つかりませんでした。もう一度試してください'); return; }
+    showPickResult(picked, parsed.reason || '');
+  }catch(err){
+    ov.remove();
+    toast('失敗しました：'+err.message);
+  }
+}
+
+function showPickResult(picked, reason){
+  const ov = modal(`
+    <h2>今日はこれ</h2>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:6px">${esc(picked.tabLabel)}</div>
+    <div style="white-space:pre-wrap;font-size:14.5px;line-height:1.7;background:var(--bg);border-radius:10px;padding:12px;margin-bottom:10px">${esc(picked.text)}</div>
+    ${reason ? '<div style="font-size:13px;color:var(--muted);line-height:1.7;margin-bottom:4px">💡 '+esc(reason)+'</div>' : ''}
+    <div class="modal-acts">
+      <button class="btn-ghost" data-x>閉じる</button>
+      <button class="btn-solid" data-go>このタブを開く</button>
+    </div>`);
+  ov.querySelector('[data-x]').onclick = () => ov.remove();
+  ov.querySelector('[data-go]').onclick = () => {
+    ov.remove();
+    tab = picked.tabKey;
+    render();
+    setTimeout(() => {
+      const el = document.querySelector('[data-hlkey="'+picked.domKey+'"]');
+      if(!el) return;
+      el.scrollIntoView({behavior:'smooth', block:'center'});
+      const card = el.closest('article');
+      if(card){
+        card.style.transition = 'box-shadow .3s';
+        card.style.boxShadow = '0 0 0 3px var(--memo)';
+        setTimeout(() => { card.style.boxShadow = ''; }, 2200);
+      }
+    }, 80);
+  };
+}
+
 /* ---- 手順書エディタ ---- */
 function editProc(id){
   const isNew = !id;
@@ -1214,6 +1347,9 @@ document.addEventListener('click', e => {
   toast('この項目だけ印刷します（自動両面：' + (state.autoDuplex ? 'オン' : 'オフ') + '）');
   printItems(new Set([b.dataset.pr]));
 });
+
+$('#btnPick').onclick = () => pickTask();
+$('#btnAiKey').onclick = () => askApiKey();
 
 $('#btnPrint').onclick = () => {
   const cat = printCatalog();
