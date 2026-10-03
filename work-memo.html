@@ -422,7 +422,7 @@ function normalizeState(d){
     const engCat = state.categories.find(c => c.name === '英語');
     if(engCat){
       state.memos.filter(m => m.catId === engCat.id).forEach(m => {
-        state.english.push({id:uid(), text:m.text, created:m.created});
+        state.english.push({id:uid(), text:m.text, created:m.created, updated:m.created});
       });
       state.memos = state.memos.filter(m => m.catId !== engCat.id);
       state.categories = state.categories.filter(c => c.id !== engCat.id);
@@ -674,7 +674,7 @@ function renderMemo(){
   $('#chips').innerHTML = chips.join('');
 
   // 一覧（新しい順）
-  let list = state.memos.slice().sort((a,b) => b.created - a.created);
+  let list = state.memos.slice().sort((a,b) => (b.updated||b.created) - (a.updated||a.created));
   if(activeCat !== 'all') list = list.filter(m => m.catId === activeCat);
   if(query) list = list.filter(m => m.text.toLowerCase().includes(query));
 
@@ -724,7 +724,7 @@ function renderProc(){
 }
 
 function renderProd(){
-  let list = state.products.slice().sort((a,b) => a.name.localeCompare(b.name,'ja'));
+  let list = state.products.slice().sort((a,b) => (b.updated||b.created) - (a.updated||a.created));
   if(query){
     list = list.filter(p =>
       p.name.toLowerCase().includes(query) ||
@@ -761,7 +761,7 @@ function renderProd(){
 function renderTodo(){
   let list = state.todos.slice();
   if(query) list = list.filter(t => t.text.toLowerCase().includes(query) || (t.note||'').toLowerCase().includes(query));
-  const open = list.filter(t => !t.done).sort((a,b) => b.created - a.created);
+  const open = list.filter(t => !t.done).sort((a,b) => (b.updated||b.created) - (a.updated||a.created));
   const done = list.filter(t => t.done).sort((a,b) => (b.checkedAt||0) - (a.checkedAt||0));
   list = open.concat(done);
 
@@ -789,7 +789,7 @@ function renderTodo(){
 }
 
 function renderEnglish(){
-  let list = state.english.slice().sort((a,b) => b.created - a.created);
+  let list = state.english.slice().sort((a,b) => (b.updated||b.created) - (a.updated||a.created));
   if(query) list = list.filter(e => e.text.toLowerCase().includes(query));
   if(!list.length){
     $('#engList').innerHTML = '<div class="empty">'+
@@ -929,7 +929,7 @@ function newProduct(){
       id:uid(), name,
       maker: ov.querySelector('#pm').value.trim(),
       facts: first ? [{id:uid(), text:first, created:Date.now()}] : [],
-      created:Date.now()
+      created:Date.now(), updated:Date.now()
     });
     save(); ov.remove(); render(); toast('登録しました');
   };
@@ -987,6 +987,7 @@ function editProduct(id){
     p.name = name;
     p.maker = ov.querySelector('#pm').value.trim();
     p.facts = p.facts.filter(f => f.text.trim());
+    p.updated = Date.now();
     state.products[state.products.findIndex(x => x.id === p.id)] = p;
     save(); ov.remove(); render(); toast('保存しました');
   };
@@ -1009,17 +1010,17 @@ $('#btnQuickSave').onclick = () => {
   const t = $('#quick').value.trim();
   if(!t) return;
   if(tab === 'todo'){
-    state.todos.push({id:uid(), text:t, done:false, created:Date.now(), note:''});
+    state.todos.push({id:uid(), text:t, done:false, created:Date.now(), updated:Date.now(), note:''});
     save(); $('#quick').value = ''; render(); toast('追加しました');
     return;
   }
   if(tab === 'eng'){
-    state.english.push({id:uid(), text:t, created:Date.now()});
+    state.english.push({id:uid(), text:t, created:Date.now(), updated:Date.now()});
     save(); $('#quick').value = ''; render(); toast('保存しました');
     return;
   }
   const cat = activeCat === 'all' ? (state.categories[0]?.id || null) : activeCat;
-  state.memos.push({id:uid(), catId:cat, text:t, created:Date.now()});
+  state.memos.push({id:uid(), catId:cat, text:t, created:Date.now(), updated:Date.now()});
   save(); $('#quick').value = ''; render(); toast('保存しました');
 };
 
@@ -1047,7 +1048,7 @@ $('#memoList').onclick = e => {
   const b = e.target.closest('button'); if(!b) return;
   if(b.dataset.edit){
     const m = state.memos.find(x => x.id === b.dataset.edit);
-    askText('メモを直す', m.text, v => { m.text = v; save(); render(); }, true);
+    askText('メモを直す', m.text, v => { m.text = v; m.updated = Date.now(); save(); render(); }, true);
   }
   if(b.dataset.move){
     const m = state.memos.find(x => x.id === b.dataset.move);
@@ -1082,7 +1083,7 @@ $('#prodList').onclick = e => {
   if(b.dataset.fadd){
     const p = state.products.find(x => x.id === b.dataset.fadd);
     askText(p.name + 'に足す', '', v => {
-      p.facts.push({id:uid(), text:v, created:Date.now()}); save(); render(); toast('足しました');
+      p.facts.push({id:uid(), text:v, created:Date.now()}); p.updated = Date.now(); save(); render(); toast('足しました');
     }, true);
   }
   if(b.dataset.fedit) editProduct(b.dataset.fedit);
@@ -1098,11 +1099,11 @@ $('#todoList').onclick = e => {
   const b = e.target.closest('button'); if(!b) return;
   if(b.dataset.note){
     const t = state.todos.find(x => x.id === b.dataset.note);
-    askText('分かったこと', t.note, v => { t.note = v; save(); render(); }, true);
+    askText('分かったこと', t.note, v => { t.note = v; t.updated = Date.now(); save(); render(); }, true);
   }
   if(b.dataset.tedit){
     const t = state.todos.find(x => x.id === b.dataset.tedit);
-    askText('調べることを直す', t.text, v => { t.text = v; save(); render(); }, true);
+    askText('調べることを直す', t.text, v => { t.text = v; t.updated = Date.now(); save(); render(); }, true);
   }
   if(b.dataset.tdel){
     confirmDel('これを消しますか？', () => {
@@ -1122,7 +1123,7 @@ $('#engList').onclick = e => {
   const b = e.target.closest('button'); if(!b) return;
   if(b.dataset.eedit){
     const it = state.english.find(x => x.id === b.dataset.eedit);
-    askText('英語メモを直す', it.text, v => { it.text = v; save(); render(); }, true);
+    askText('英語メモを直す', it.text, v => { it.text = v; it.updated = Date.now(); save(); render(); }, true);
   }
   if(b.dataset.edel){
     confirmDel('このメモを消しますか？', () => {
@@ -1894,7 +1895,7 @@ function createFromExtract(destType, ex){
       text += l.text;
     });
     const catId = (activeCat !== 'all' && tab === 'memo') ? activeCat : (state.categories[0] && state.categories[0].id) || null;
-    state.memos.push({id: uid(), text, highlights: ranges, catId, created: now});
+    state.memos.push({id: uid(), text, highlights: ranges, catId, created: now, updated: now});
     return;
   }
   const hasHeading = !!ex.heading;
@@ -1908,7 +1909,7 @@ function createFromExtract(destType, ex){
   }else if(destType === 'prod'){
     let facts = bodyLines.map(l => ({id: uid(), text: l.text, highlights: l.ranges || [], created: now}));
     if(!facts.length && ex.lines[0]) facts = [{id: uid(), text: ex.lines[0].text, highlights: ex.lines[0].ranges || [], created: now}];
-    state.products.push({id: uid(), name: title, maker: '', facts, created: now});
+    state.products.push({id: uid(), name: title, maker: '', facts, created: now, updated: now});
   }else if(destType === 'todo'){
     const first = ex.lines[0] || {text: '', ranges: []};
     const headPrefix = ex.heading ? ex.heading + ' ' : '';
@@ -1916,7 +1917,7 @@ function createFromExtract(destType, ex){
     const noteLine = ex.lines[1];
     const note = ex.lines.slice(1).map(l => l.text).join('\n');
     const shiftedFirstRanges = (first.ranges || []).map(([a,b]) => [a + headPrefix.length, b + headPrefix.length]);
-    state.todos.push({id: uid(), text, note, highlights: shiftedFirstRanges, noteHighlights: (ex.lines.length === 2 && noteLine) ? (noteLine.ranges || []) : [], done: false, created: now});
+    state.todos.push({id: uid(), text, note, highlights: shiftedFirstRanges, noteHighlights: (ex.lines.length === 2 && noteLine) ? (noteLine.ranges || []) : [], done: false, created: now, updated: now});
   }else if(destType === 'eng'){
     let text = '', ranges = [], off = 0;
     if(ex.heading){ text += ex.heading + '\n'; off = text.length; }
@@ -1925,7 +1926,7 @@ function createFromExtract(destType, ex){
       (l.ranges || []).forEach(([a,b]) => ranges.push([a+off, b+off]));
       text += l.text;
     });
-    state.english.push({id: uid(), text, highlights: ranges, created: now});
+    state.english.push({id: uid(), text, highlights: ranges, created: now, updated: now});
   }
 }
 document.addEventListener('click', e => {
